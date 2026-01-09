@@ -20,16 +20,16 @@ A unified architecture combining **Gated Sparse Attention (GSA)** with **Orthogo
 
 ## Overview
 
-**OrthGSA** (Manifold-constrained Gated Sparse Attention) is a novel transformer architecture that synergistically integrates two complementary innovations:
+**OrthGSA** (Orthogonally-constrained Gated Sparse Attention) is a novel transformer architecture that synergistically integrates two complementary innovations:
 
 | Component | Source | Contribution |
 |-----------|--------|--------------|
 | **Gated Sparse Attention** | GSA | Sub-quadratic attention complexity, attention sink elimination |
-| **Manifold-Constrained Hyper-Connections** | mHC | Identity mapping preservation via Cayley Transform, multi-stream residual expressiveness |
+| **Orthogonal-Constrained Hyper-Connections** | oHC | Identity mapping preservation via Cayley Transform, multi-stream residual expressiveness |
 
 ### Key Benefits
 
-| Property | Standard Transformer | GSA Only | mHC Only | **OrthGSA** |
+| Property | Standard Transformer | GSA Only | oHC Only | **OrthGSA** |
 |----------|---------------------|----------|----------|-------------|
 | Attention Complexity | O(L²d) | **O(Lkd)** | O(L²d) | **O(Lkd)** |
 | Attention Sinks | Severe | **Eliminated** | Moderate | **Eliminated** |
@@ -42,7 +42,7 @@ A unified architecture combining **Gated Sparse Attention (GSA)** with **Orthogo
 
 ## Design Rationale
 
-### Why Combine GSA and mHC?
+### Why Combine GSA and oHC?
 
 The two innovations address **complementary** aspects of transformer architecture:
 
@@ -51,7 +51,7 @@ The two innovations address **complementary** aspects of transformer architectur
 - Attention sink phenomenon → Sigmoid gating (bounded activations)
 - Training instability from attention → Dual gating (G1/G2)
 
-**mHC addresses residual connection concerns:**
+**oHC addresses residual connection concerns:**
 - Single-stream residual bottleneck → n-stream expansion
 - Signal explosion/vanishing in deep networks → Orthogonal constraint via Cayley Transform
 - Loss of identity mapping property → Orthogonal residual matrices (unit spectral norm)
@@ -65,22 +65,22 @@ The two innovations address **complementary** aspects of transformer architectur
 │                                                                             │
 │   Layer Level        │    Component         │    Innovation                 │
 │   ─────────────────────────────────────────────────────────                │
-│   Residual Stream    │    mHC               │    n-stream expansion        │
+│   Residual Stream    │    oHC               │    n-stream expansion        │
 │                      │                      │    Cayley Transform          │
 │   ─────────────────────────────────────────────────────────                │
 │   Attention Layer    │    GSA               │    Sparse selection          │
 │                      │                      │    Dual gating (G1, G2)       │
 │   ─────────────────────────────────────────────────────────                │
-│   FFN Layer          │    Standard/mHC      │    Multi-stream aggregation  │
+│   FFN Layer          │    Standard/oHC      │    Multi-stream aggregation  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Design Decisions
 
-1. **Apply mHC at residual level**: Wrap the entire GSA block with manifold-constrained hyper-connections
+1. **Apply oHC at residual level**: Wrap the entire GSA block with orthogonally-constrained hyper-connections
 2. **Apply GSA within the attention layer**: Replace standard attention with gated sparse attention
-3. **Unified gating philosophy**: Both mHC and GSA use sigmoid-based gating for stability
+3. **Unified gating philosophy**: Both oHC and GSA use sigmoid-based gating for stability
 4. **Shared infrastructure**: Leverage kernel fusion from both approaches
 
 ---
@@ -100,7 +100,7 @@ Where:
 - $\mathbf{H}_l^{\text{post}} \in \mathbb{R}_+^{1 \times n}$ : post-mapping (distributes to n streams)
 - $\mathcal{F}^{\text{GSA}}$ : Gated Sparse Attention function
 
-### 2. Manifold-Constrained Coefficient Computation (from mHC)
+### 2. Orthogonal-Constrained Coefficient Computation (from oHC)
 
 **Step 2.1**: Normalize input
 
@@ -114,7 +114,7 @@ $$\tilde{\mathbf{H}}_l^{\text{post}} = \alpha_l^{\text{post}} \cdot (\vec{\mathb
 
 $$\tilde{\mathbf{H}}_l^{\text{res}} = \alpha_l^{\text{res}} \cdot \text{mat}(\vec{\mathbf{x}}'_l \cdot \boldsymbol{\varphi}_l^{\text{res}}) + \mathbf{b}_l^{\text{res}} \in \mathbb{R}^{n \times n}$$
 
-**Step 2.3**: Apply manifold projections
+**Step 2.3**: Apply orthogonal projections
 
 $$\mathbf{H}_l^{\text{pre}} = \sigma(\tilde{\mathbf{H}}_l^{\text{pre}}) \quad \text{(Sigmoid for non-negativity)}$$
 
@@ -664,7 +664,7 @@ For each layer l:
               │                             │
               ▼                             │
   ┌───────────────────────────────────┐     │
-  │ STEP 2a: Compute mHC Coefficients │     │
+  │ STEP 2a: Compute oHC Coefficients │     │
   ├───────────────────────────────────┤     │
   │ vec_x = reshape(x_l, [B×L, n×C])  │     │
   │ x_norm = RMSNorm(vec_x)           │     │
@@ -747,10 +747,10 @@ For each layer l:
                   │
                   ▼
   ┌───────────────────────────────────┐
-  │ STEP 2e: mHC + FFN (similar flow) │
+  │ STEP 2e: oHC + FFN (similar flow) │
   ├───────────────────────────────────┤
-  │ // Compute new mHC coefficients   │
-  │ H_pre', H_post', H_res' = mHC(x_{l+0.5})
+  │ // Compute new oHC coefficients   │
+  │ H_pre', H_post', H_res' = oHC(x_{l+0.5})
   │                                   │
   │ // Pre-mapping                    │
   │ y' = H_pre' @ x_{l+0.5}           │
@@ -802,7 +802,7 @@ PHASE 3: OUTPUT
 | Tensor | Shape | Description |
 |--------|-------|-------------|
 | `x_l` | `[B, L, n, C]` | n-stream hidden state |
-| `vec_x` | `[B×L, n×C]` | Flattened for mHC computation |
+| `vec_x` | `[B×L, n×C]` | Flattened for oHC computation |
 | `H_pre` | `[B×L, 1, n]` | Pre-mapping coefficients |
 | `H_post` | `[B×L, 1, n]` | Post-mapping coefficients |
 | `H_res` | `[B×L, n, n]` | Residual mapping (orthogonal via Cayley) |
@@ -835,7 +835,7 @@ Output:
 1:  for l = 0 to L-1 do
 2:      // ═══ ATTENTION SUB-BLOCK ═══
 3:
-4:      // Compute mHC coefficients (attention)
+4:      // Compute oHC coefficients (attention)
 5:      x_norm ← RMSNorm(flatten(x_l))
 6:      H_pre_attn ← σ(α_pre · (x_norm · φ_pre) + b_pre)
 7:      H_post_attn ← 2 · σ(α_post · (x_norm · φ_post) + b_post)
@@ -854,7 +854,7 @@ Output:
 20:
 21:     // ═══ FFN SUB-BLOCK ═══
 22:
-23:     // Compute mHC coefficients (FFN)
+23:     // Compute oHC coefficients (FFN)
 24:     x_norm_ffn ← RMSNorm(flatten(x_mid))
 25:     H_pre_ffn ← σ(α_pre_ffn · (x_norm_ffn · φ_pre_ffn) + b_pre_ffn)
 26:     H_post_ffn ← 2 · σ(α_post_ffn · (x_norm_ffn · φ_post_ffn) + b_post_ffn)
@@ -882,7 +882,7 @@ Output:
 Algorithm: GSA(y, θ_attn)
 ─────────────────────────────────────────────────────────────────────────────────
 Input:
-  y ∈ ℝ^{B×L×C}       : Single-stream input (from mHC pre-mapping)
+  y ∈ ℝ^{B×L×C}       : Single-stream input (from oHC pre-mapping)
   θ_attn              : Attention parameters
 
 Output:
@@ -990,7 +990,7 @@ Properties of output H:
 │                        FUSED KERNEL ARCHITECTURE                                │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
-FUSED KERNEL 1: mHC Coefficient Computation
+FUSED KERNEL 1: oHC Coefficient Computation
 ────────────────────────────────────────────
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Input: x_l ∈ ℝ^{B×L×n×C}                                          │
@@ -1111,7 +1111,7 @@ Block Size: L_r* = √(nL/(n+2))  (optimal for OrthGSA)
 │                                                                     │
 │   Layer 0  ─┐                                                       │
 │   Layer 1   │ Block 0                  Recompute:                   │
-│   ...       │                          • mHC coefficients           │
+│   ...       │                          • oHC coefficients           │
 │   Layer L_r─┘  → Store x_0             • H_pre, H_post, H_res       │
 │                                        • Pre-mapping y              │
 │   Layer L_r+1─┐                        • Indexer scores             │
@@ -1123,7 +1123,7 @@ Block Size: L_r* = √(nL/(n+2))  (optimal for OrthGSA)
 │                                                                     │
 │   Cost Analysis:                                                    │
 │   Storage: nC × ⌈L/L_r⌉ per sequence                               │
-│   Recompute: ~15% overhead (mHC coefficients are cheap)            │
+│   Recompute: ~15% overhead (oHC coefficients are cheap)            │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -1132,7 +1132,7 @@ Block Size: L_r* = √(nL/(n+2))  (optimal for OrthGSA)
 
 | Operation | Naive I/O | Optimized I/O | Savings |
 |-----------|-----------|---------------|---------|
-| mHC Coefficients | 3nC + n² + 2n read, n² + 2n write | nC read, n² + 2n write | 66% |
+| oHC Coefficients | 3nC + n² + 2n read, n² + 2n write | nC read, n² + 2n write | 66% |
 | Pre + Post + Res Mapping | (3n+1)C read, 3nC write | (n+1)C read, nC write | 70% |
 | GSA Indexer | 3LC read, L² write | 3LC read, Lk write | ~85% |
 | Sparse SDPA | L²d read, Ld write | Lkd read, Ld write | ~85% |
@@ -1166,8 +1166,8 @@ Optimization Strategy:
 ─────────────────────
 1. Execute Post+Res mapping on high-priority compute stream
 2. Overlap Cayley Transform computation with P2P communication
-3. Use separate CUDA streams for mHC and GSA computations
-4. Prefetch next layer's mHC parameters during current layer's SDPA
+3. Use separate CUDA streams for oHC and GSA computations
+4. Prefetch next layer's oHC parameters during current layer's SDPA
 ```
 
 ---
@@ -1178,7 +1178,7 @@ Optimization Strategy:
 
 | Component | Time Complexity | Space Complexity |
 |-----------|-----------------|------------------|
-| mHC Coefficient Computation | O(BLnC) | O(n² + 2n) |
+| oHC Coefficient Computation | O(BLnC) | O(n² + 2n) |
 | Cayley Transform (per token) | O(n³) | O(n²) |
 | Pre/Post/Res Mapping | O(BLnC) | O(nC) |
 | GSA Indexer | O(BL²d_I × H^I) | O(L²) |
@@ -1189,7 +1189,7 @@ For typical settings (n=4, k<<L):
 - **OrthGSA**: O(BL·k·d) attention + O(BL·nC) residual
 - **Standard Transformer**: O(BL²d)
 
-**Speedup**: ~(L/k) × for attention, with ~6.7% overhead from mHC
+**Speedup**: ~(L/k) × for attention, with ~6.7% overhead from oHC
 
 ### 2. Gradient Flow Analysis
 
@@ -1255,13 +1255,13 @@ Combined with sparse selection, this prevents any single token from dominating a
 | Indexer heads | H^I | 4 | Lightweight |
 | Indexer dimension | d_I | 64 | Compact |
 | Gate bias init | - | 0.5 | Moderate initial gating |
-| mHC alpha init | α | 0.01 | Small for near-identity start |
+| oHC alpha init | α | 0.01 | Small for near-identity start |
 
 ### 2. Initialization Strategy
 
 ```python
 def initialize_orthgsa_layer(layer):
-    # mHC coefficients - start near identity
+    # oHC coefficients - start near identity
     nn.init.zeros_(layer.phi_pre)
     nn.init.zeros_(layer.phi_post)
     nn.init.zeros_(layer.phi_res)
@@ -1306,17 +1306,17 @@ def cayley_transform(H_raw: torch.Tensor) -> torch.Tensor:
 
 ### 3. Training Stability Techniques
 
-1. **Warmup schedule for mHC**:
+1. **Warmup schedule for oHC**:
    - First 1000 steps: α = 0.001
    - Ramp up over 5000 steps to target α
 
 2. **Separate learning rates**:
-   - mHC parameters: 10× base LR (they're cheap to compute)
+   - oHC parameters: 10× base LR (they're cheap to compute)
    - GSA parameters: 1× base LR
 
 3. **Gradient clipping**:
    - Global norm clipping at 1.0
-   - Additional per-layer clipping for mHC coefficients
+   - Additional per-layer clipping for oHC coefficients
 
 4. **Mixed precision**:
    - Cayley Transform linear solve in FP32 (numerical stability)
@@ -1340,7 +1340,7 @@ def cayley_transform(H_raw: torch.Tensor) -> torch.Tensor:
 **OrthGSA** unifies two complementary architectural innovations:
 
 1. **From GSA**: Sub-quadratic sparse attention, attention sink elimination via dual gating
-2. **From mHC**: Multi-stream residual connections with orthogonal constraints via **Cayley Transform**
+2. **From oHC**: Multi-stream residual connections with orthogonal constraints via **Cayley Transform**
 
 The combination yields a transformer architecture that is:
 - **Computationally efficient**: O(Lkd) instead of O(L²d) for attention
@@ -1361,7 +1361,7 @@ The Cayley Transform $(\mathbf{I} - \mathbf{A})(\mathbf{I} + \mathbf{A})^{-1}$ p
 ## References
 
 1. **Gated Sparse Attention (GSA)**: Combining Computational Efficiency with Training Stability for Long-Context Language Models
-2. **mHC**: Manifold-Constrained Hyper-Connections (arXiv:2512.24880)
+2. **oHC**: Orthogonal-Constrained Hyper-Connections (to be published)
 3. DeepSeek-V3: Pushing the Frontier of Open Large Language Models
 4. Gated Attention for Large Language Models (arXiv:2505.06708)
 5. Cayley (1846): Sur quelques propriétés des déterminants gauches
