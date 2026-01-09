@@ -1,0 +1,33 @@
+# OrthGSA Requirements
+# Tested with Python 3.10+
+
+# Core dependencies
+torch>=2.1.0
+transformers>=4.37.0
+datasets>=2.16.0
+accelerate>=0.25.0
+tokenizers>=0.15.0
+
+# Training utilities
+wandb>=0.16.0
+tensorboard>=2.15.0
+tqdm>=4.66.0
+pyyaml>=6.0
+
+# Optimization
+flash-attn>=2.4.0  # Optional: requires compatible GPU
+triton>=2.1.0  # For custom kernels
+
+# Data processing
+sentencepiece>=0.1.99
+protobuf>=4.25.0
+
+# Utilities
+numpy>=1.24.0
+scipy>=1.11.0
+einops>=0.7.0
+
+# Development
+pytest>=7.4.0
+black>=23.0.0
+isort>=5.12.0
