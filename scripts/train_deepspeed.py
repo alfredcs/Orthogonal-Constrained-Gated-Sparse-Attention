@@ -253,7 +253,7 @@ def main():
         "scheduler": {
             "type": "WarmupDecayLR",
             "params": {
-                "warmup_min_lr": 0,
+                "warmup_min_lr": 1e-6,  # Start with small non-zero LR for actual training
                 "warmup_max_lr": training_config["learning_rate"],
                 "warmup_num_steps": int(training_config["max_steps"] * training_config["warmup_ratio"]),
                 "total_num_steps": training_config["max_steps"],
@@ -338,7 +338,9 @@ def main():
 
             # Logging
             if global_step % logging_steps == 0:
-                avg_loss = accumulated_loss / logging_steps
+                # Fix: divide by total micro-batches, not just logging_steps
+                num_micro_batches = logging_steps * training_config["gradient_accumulation_steps"]
+                avg_loss = accumulated_loss / num_micro_batches
                 accumulated_loss = 0.0
 
                 lr = lr_scheduler.get_last_lr()[0] if lr_scheduler else optimizer.param_groups[0]["lr"]

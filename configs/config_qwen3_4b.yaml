@@ -7,7 +7,7 @@ model:
 
   # OrthGSA-specific parameters (using Cayley Transform for orthogonal constraints)
   orthgsa:
-    n_streams: 4                    # Number of residual streams
+    n_streams: 2                    # Number of residual streams (reduced from 4 for faster training)
     alpha_init: 0.01                # Initial scaling for orthogonal HC coefficients
     cayley_scaling: 0.1             # Scaling for Cayley transform input
 
