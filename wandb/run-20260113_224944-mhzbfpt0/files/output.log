@@ -1,5 +1,0 @@
-2026-01-13 22:49:45 - INFO - __main__ - Wandb initialized: https://wandb.ai/alfredcs_team/orthgsa-qwen3-4b/runs/mhzbfpt0
-2026-01-13 22:49:46 - INFO - __main__ - Loading model: Qwen/Qwen3-4B-Instruct-2507
-2026-01-13 22:49:46 - INFO - orthgsa.models.orthgsa_model - Loading base model: Qwen/Qwen3-4B-Instruct-2507
-`torch_dtype` is deprecated! Use `dtype` instead!
-Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:00<00:00, 70.08it/s]
