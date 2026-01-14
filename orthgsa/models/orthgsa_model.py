@@ -160,6 +160,7 @@ class OrthGSAForCausalLM(nn.Module):
         super().__init__()
 
         self.orthgsa_config = orthgsa_config or OrthGSAConfig()
+        self.torch_dtype = torch_dtype
 
         # Load base model config
         self.config = AutoConfig.from_pretrained(base_model_name, trust_remote_code=True)
@@ -182,6 +183,9 @@ class OrthGSAForCausalLM(nn.Module):
 
         # Create OrthGSA layers
         self._create_orthgsa_layers()
+
+        # Convert all new modules to the same dtype as base model
+        self._convert_to_dtype(torch_dtype)
 
         logger.info(f"OrthGSA model initialized with {self.orthgsa_config.n_streams} streams")
 
@@ -260,6 +264,16 @@ class OrthGSAForCausalLM(nn.Module):
             torch.ones(self.n_streams) / self.n_streams
         )
 
+    def _convert_to_dtype(self, dtype: torch.dtype):
+        """Convert all OrthGSA modules to the specified dtype for FSDP compatibility."""
+        # Convert mHC modules
+        for mhc in self.mhc_modules:
+            mhc.to(dtype)
+
+        # Convert stream parameters
+        self.expand_streams.data = self.expand_streams.data.to(dtype)
+        self.collapse_streams.data = self.collapse_streams.data.to(dtype)
+
     def expand_to_streams(self, x: torch.Tensor) -> torch.Tensor:
         """Expand single-stream to n-stream format."""
         # x: [B, L, C] -> [B, L, n, C]
@@ -274,6 +288,54 @@ class OrthGSAForCausalLM(nn.Module):
         weights = F.softmax(self.collapse_streams, dim=0)
         collapsed = (x * weights.view(1, 1, -1, 1)).sum(dim=-2)
         return collapsed
+
+    def _prepare_4d_causal_attention_mask(
+        self,
+        attention_mask: torch.Tensor,
+        dtype: torch.dtype,
+        seq_length: int,
+    ) -> torch.Tensor:
+        """
+        Prepare 4D causal attention mask from 2D attention mask.
+
+        Args:
+            attention_mask: [batch, seq_len] tensor with 1s for valid positions, 0s for padding
+            dtype: Target dtype for the mask
+            seq_length: Sequence length
+
+        Returns:
+            4D causal mask [batch, 1, seq_len, seq_len] suitable for SDPA
+        """
+        batch_size = attention_mask.shape[0]
+        device = attention_mask.device
+
+        # Create causal mask (lower triangular)
+        # Shape: [1, 1, seq_len, seq_len]
+        causal_mask = torch.triu(
+            torch.ones((seq_length, seq_length), dtype=torch.bool, device=device),
+            diagonal=1
+        )
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+
+        # Expand causal mask for batch
+        causal_mask = causal_mask.expand(batch_size, 1, seq_length, seq_length)
+
+        # Create padding mask from attention_mask
+        # attention_mask: [batch, seq_len] -> [batch, 1, 1, seq_len]
+        padding_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        padding_mask = padding_mask.expand(-1, 1, seq_length, -1)
+
+        # Combine masks: True means masked (should not attend)
+        # causal_mask is True for positions to mask (upper triangle)
+        # padding_mask is True for valid positions, False for padding
+        # We want to mask where either causal says mask OR padding says mask
+        combined_mask = causal_mask | (~padding_mask.bool())
+
+        # Convert to float mask for SDPA: 0.0 for attend, -inf for mask
+        float_mask = torch.zeros_like(combined_mask, dtype=dtype)
+        float_mask.masked_fill_(combined_mask, float("-inf"))
+
+        return float_mask
 
     def forward(
         self,
@@ -301,6 +363,47 @@ class OrthGSAForCausalLM(nn.Module):
             # Use base model's embedding
             hidden_states = self.base_model.model.embed_tokens(input_ids)
 
+        batch_size, seq_length = input_ids.shape
+
+        # Create position_ids if not provided
+        if position_ids is None:
+            device = input_ids.device
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
+
+        # Compute position embeddings (rotary embeddings) for Qwen3
+        # Access rotary_emb directly from base_model to ensure correct reference after FSDP wrapping
+        position_embeddings = None
+        rotary_emb = None
+
+        # Try multiple paths to find rotary_emb (handles different model structures)
+        if hasattr(self.base_model, 'model') and hasattr(self.base_model.model, 'rotary_emb'):
+            rotary_emb = self.base_model.model.rotary_emb
+        elif hasattr(self.transformer, 'rotary_emb'):
+            rotary_emb = self.transformer.rotary_emb
+        elif hasattr(self.base_model, 'transformer') and hasattr(self.base_model.transformer, 'rotary_emb'):
+            rotary_emb = self.base_model.transformer.rotary_emb
+
+        if rotary_emb is not None:
+            position_embeddings = rotary_emb(hidden_states, position_ids)
+        else:
+            raise RuntimeError(
+                "Could not find rotary_emb in model. This is required for Qwen3 models. "
+                f"Model structure: base_model has 'model': {hasattr(self.base_model, 'model')}, "
+                f"transformer type: {type(self.transformer)}"
+            )
+
+        # Prepare 4D causal attention mask for SDPA
+        # The mask should be [batch, 1, seq_len, seq_len] for causal attention
+        # When attention_mask is None, SDPA uses causal masking automatically
+        causal_mask = None
+        if attention_mask is not None:
+            # Create 4D causal mask that combines padding mask with causal structure
+            # attention_mask: [batch, seq_len] -> causal_mask: [batch, 1, seq_len, seq_len]
+            causal_mask = self._prepare_4d_causal_attention_mask(
+                attention_mask, hidden_states.dtype, seq_length
+            )
+
         # Expand to n-streams
         hidden_states = self.expand_to_streams(hidden_states)  # [B, L, n, C]
 
@@ -313,11 +416,14 @@ class OrthGSAForCausalLM(nn.Module):
                 all_hidden_states += (self.collapse_from_streams(hidden_states),)
 
             # Define layer function for mHC
-            def layer_fn(x, layer=layer, mask=attention_mask, pos_ids=position_ids):
+            # Pass None for attention_mask to let SDPA use causal attention automatically
+            # This avoids complex mask preparation and works with packed sequences
+            def layer_fn(x, layer=layer, mask=causal_mask, pos_ids=position_ids, pos_emb=position_embeddings):
                 outputs = layer(
                     x,
                     attention_mask=mask,
                     position_ids=pos_ids,
+                    position_embeddings=pos_emb,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )

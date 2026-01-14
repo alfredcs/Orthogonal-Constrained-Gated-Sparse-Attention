@@ -33,6 +33,14 @@ def cayley_transform(H_raw: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     Returns:
         Orthogonal matrix of shape [..., n, n]
     """
+    # Store original dtype for casting back (linalg.solve doesn't support bf16)
+    original_dtype = H_raw.dtype
+    compute_dtype = torch.float32
+
+    # Cast to float32 for computation if needed
+    if original_dtype in (torch.bfloat16, torch.float16):
+        H_raw = H_raw.to(compute_dtype)
+
     # Extract skew-symmetric component: A = (H - H^T) / 2
     A = (H_raw - H_raw.transpose(-2, -1)) / 2
 
@@ -52,39 +60,14 @@ def cayley_transform(H_raw: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     I_plus_A = I + A
     I_minus_A = I - A
 
-    # Use torch.linalg.solve for numerical stability
-    # solve(A, B) computes A^{-1} @ B, so solve(I+A, I-A) = (I+A)^{-1}(I-A)
-    # But we want (I-A)(I+A)^{-1}, so we need to transpose the solve
-    # Actually: (I-A)(I+A)^{-1} = solve(I+A^T, I-A^T)^T = solve((I+A)^T, (I-A)^T)^T
-    # Since A is skew-symmetric: A^T = -A, so (I+A)^T = I - A, (I-A)^T = I + A
-    # Therefore: solve((I-A), (I+A))^T = (I-A)^{-1}(I+A), transposed gives (I+A)^T(I-A)^{-T}
-    #
-    # Simpler: just compute (I-A) @ inverse(I+A)
-    # Or use: solve(I+A^T, (I-A)^T)^T for (I-A)(I+A)^{-1}
-
-    # Direct approach using linalg.solve
-    # We want X such that (I+A) @ X^T = (I-A)^T = I + A (since A^T = -A)
-    # So X^T = (I+A)^{-1} @ (I+A) = I... that's wrong
-
-    # Let's be more careful:
-    # We want Q = (I - A) @ (I + A)^{-1}
-    # Let Y = (I + A)^{-1}, then Q = (I - A) @ Y
-    # Y = solve(I + A, I)
-    # Q = (I - A) @ Y
-
-    # More efficient: solve the system directly
-    # (I + A) @ Q^T = (I - A)^T = I + A (since (I-A)^T = I - A^T = I + A for skew-sym A)
-    # Hmm, that gives Q^T = I, which is wrong.
-
-    # Let me reconsider:
     # Q = (I - A)(I + A)^{-1}
-    # Q^T = ((I + A)^{-1})^T (I - A)^T = ((I + A)^T)^{-1} (I - A)^T
-    #     = (I + A^T)^{-1} (I - A^T) = (I - A)^{-1} (I + A)  [since A^T = -A]
-    #
-    # So: (I + A) @ Q = (I - A)
+    # Solving: (I + A) @ Q = (I - A)
     # Therefore: Q = solve(I + A, I - A)
-
     Q = torch.linalg.solve(I_plus_A, I_minus_A)
+
+    # Cast back to original dtype
+    if original_dtype in (torch.bfloat16, torch.float16):
+        Q = Q.to(original_dtype)
 
     return Q
 
@@ -105,6 +88,14 @@ def cayley_transform_batched(H_raw: torch.Tensor, eps: float = 1e-6) -> torch.Te
     n = H_raw.shape[-1]
 
     if n <= 4:
+        # Store original dtype for casting back (linalg.inv doesn't support bf16)
+        original_dtype = H_raw.dtype
+        compute_dtype = torch.float32
+
+        # Cast to float32 for computation if needed
+        if original_dtype in (torch.bfloat16, torch.float16):
+            H_raw = H_raw.to(compute_dtype)
+
         # For small matrices, use explicit inverse formula
         A = (H_raw - H_raw.transpose(-2, -1)) / 2
 
@@ -117,6 +108,10 @@ def cayley_transform_batched(H_raw: torch.Tensor, eps: float = 1e-6) -> torch.Te
         # Use batched inverse for small matrices
         I_plus_A_inv = torch.linalg.inv(I_plus_A)
         Q = I_minus_A @ I_plus_A_inv
+
+        # Cast back to original dtype
+        if original_dtype in (torch.bfloat16, torch.float16):
+            Q = Q.to(original_dtype)
 
         return Q
     else:

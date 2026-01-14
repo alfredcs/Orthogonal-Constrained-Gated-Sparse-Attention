@@ -10,6 +10,9 @@ from .training_utils import (
     log_metrics,
     count_parameters,
     estimate_memory_usage,
+    get_gpu_memory_info,
+    get_fsdp_config,
+    wrap_model_fsdp,
 )
 
 __all__ = [
@@ -22,4 +25,7 @@ __all__ = [
     "log_metrics",
     "count_parameters",
     "estimate_memory_usage",
+    "get_gpu_memory_info",
+    "get_fsdp_config",
+    "wrap_model_fsdp",
 ]

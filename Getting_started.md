@@ -21,10 +21,16 @@ This guide provides step-by-step instructions for setting up the environment usi
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| GPUs | 1x 24GB | 4x 44GB (A100/A6000) |
+| GPUs | 1x 24GB | 4x 40-48GB (A100/H100/L40S/A6000) |
 | RAM | 64GB | 128GB |
 | Storage | 500GB SSD | 2TB NVMe SSD |
 | CPU | 8 cores | 16+ cores |
+
+**Supported GPUs**:
+- **A100/H100** (40GB/80GB): Best performance, full precision support
+- **L40S** (48GB): Excellent for training, good cost-efficiency
+- **A6000/RTX 4090** (48GB/24GB): Good for smaller runs or inference
+- **RTX 3090/4090** (24GB): Requires DeepSpeed ZeRO-2/3
 
 ### Software Requirements
 
@@ -184,7 +190,9 @@ huggingface-cli login
 
 OrthGSA uses the **SlimPajama-627B** dataset from Cerebras, available on Hugging Face.
 
-### Step 4.1: Verify Dataset Access
+### Step 4.1: Option A - Use Streaming (Default)
+
+By default, the dataset streams from Hugging Face. Verify access:
 
 ```bash
 python -c "
@@ -197,7 +205,32 @@ print(f'Text preview: {sample[\"text\"][:200]}...')
 "
 ```
 
-### Step 4.2: Download Base Model (Optional)
+### Step 4.2: Option B - Use Pre-Downloaded Dataset (Recommended)
+
+For faster training and to avoid Hugging Face rate limits, pre-download the dataset:
+
+```bash
+# Download SlimPajama-627B to local storage
+# This requires ~2TB of disk space
+python -c "
+from datasets import load_dataset
+ds = load_dataset('cerebras/SlimPajama-627B', split='train')
+ds.save_to_disk('~/datasets/SlimPajama-627B')
+"
+```
+
+Then configure the local path in `configs/config_qwen3_4b.yaml`:
+
+```yaml
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  local_path: "~/datasets/SlimPajama-627B"  # Pre-downloaded dataset path
+  num_workers: 2                            # Reduced for local loading
+```
+
+The training script automatically uses the local path if the directory exists and is not empty. Otherwise, it falls back to streaming from Hugging Face.
+
+### Step 4.3: Download Base Model (Optional)
 
 Pre-download the Qwen3-4B model:
 
@@ -265,7 +298,16 @@ training:
   gradient_accumulation_steps: 16
 ```
 
-**8x GPUs (80GB each, A100)**:
+**4x GPUs (48GB each, L40S/A6000)**:
+```yaml
+training:
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 8
+data:
+  max_seq_length: 2048
+```
+
+**8x GPUs (80GB each, A100/H100)**:
 ```yaml
 training:
   per_device_train_batch_size: 8
@@ -295,25 +337,53 @@ CUDA_VISIBLE_DEVICES=0 python scripts/train.py \
     --config configs/config_qwen3_4b.yaml
 ```
 
-### Step 6.3: Launch Multi-GPU Training
+### Step 6.3: Launch Multi-GPU Training with DeepSpeed (Recommended)
 
-Using the launch script (recommended):
+**DeepSpeed ZeRO-2** is the recommended method for multi-GPU training. It shards optimizer states across GPUs, reducing memory usage from ~44GB to ~17GB per GPU for a 4B parameter model.
+
+Using DeepSpeed directly:
+
+```bash
+# 4 GPUs with DeepSpeed ZeRO-2
+deepspeed --num_gpus=4 scripts/train_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml
+
+# 2 GPUs
+deepspeed --num_gpus=2 scripts/train_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml
+
+# Specific GPUs
+CUDA_VISIBLE_DEVICES=0,1,2,3 deepspeed --num_gpus=4 \
+    scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
+```
+
+Using the launch script:
 
 ```bash
 # Make script executable
 chmod +x scripts/launch_train.sh
 
-# Launch with default 4 GPUs
+# Launch with default 4 GPUs (uses DeepSpeed)
 ./scripts/launch_train.sh
 
 # Or customize
 NUM_GPUS=2 CUDA_VISIBLE_DEVICES=0,1 ./scripts/launch_train.sh
 ```
 
-Using torchrun directly:
+#### Memory Requirements per GPU
+
+| Training Method | Memory per GPU (4B model) | Suitable GPUs |
+|----------------|---------------------------|---------------|
+| DDP (torchrun) | ~44GB | A100-80GB, H100 |
+| **DeepSpeed ZeRO-2** | **~17-22GB** | **A100/H100/L40S/A6000** (recommended) |
+| DeepSpeed ZeRO-3 | ~12GB | RTX 3090/4090, any 24GB+ GPU |
+
+### Step 6.4: Alternative: Multi-GPU with torchrun (DDP)
+
+> **Note**: DDP requires more memory per GPU than DeepSpeed. Use only if you have 80GB+ GPUs (A100-80GB, H100).
 
 ```bash
-# 4 GPUs
+# 4 GPUs with DDP
 torchrun \
     --nproc_per_node=4 \
     --master_port=29500 \
@@ -331,15 +401,21 @@ torchrun \
     --config configs/config_qwen3_4b.yaml
 ```
 
-### Step 6.4: Resume Training
+### Step 6.5: Resume Training
 
 ```bash
+# Resume DeepSpeed training
+deepspeed --num_gpus=4 scripts/train_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml \
+    --resume outputs/orthgsa-qwen3-4b/checkpoint-10000
+
+# Resume DDP training
 python scripts/train.py \
     --config configs/config_qwen3_4b.yaml \
     --resume outputs/orthgsa-qwen3-4b/checkpoint-10000
 ```
 
-### Step 6.5: Monitor Training
+### Step 6.6: Monitor Training
 
 ```bash
 # Watch GPU utilization
@@ -383,13 +459,43 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-### Issue: CUDA Out of Memory
+### Issue: CUDA Out of Memory with DDP (torchrun)
+
+DDP requires the full model + optimizer states on each GPU (~44GB for 4B model). **Use DeepSpeed ZeRO-2 instead**:
+
+```bash
+# Switch to DeepSpeed ZeRO-2 (reduces memory to ~17GB per GPU)
+deepspeed --num_gpus=4 scripts/train_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml
+```
+
+If you must use DDP, reduce memory usage:
 
 ```yaml
-# Reduce batch size in config
+# Reduce batch size and sequence length in config
 training:
-  per_device_train_batch_size: 2
-  gradient_accumulation_steps: 16
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 32
+data:
+  max_seq_length: 512
+```
+
+### Issue: CUDA Out of Memory with DeepSpeed
+
+```yaml
+# If still OOM with DeepSpeed ZeRO-2, try:
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 64  # Increase to maintain effective batch size
+```
+
+Or switch to ZeRO-3 by editing the deepspeed config in `scripts/train_deepspeed.py`:
+
+```python
+"zero_optimization": {
+    "stage": 3,  # Changed from 2 to 3
+    ...
+}
 ```
 
 ### Issue: PyTorch CUDA mismatch
@@ -412,6 +518,36 @@ uv pip install torch torchvision torchaudio --index-url https://download.pytorch
 MAX_JOBS=4 uv pip install flash-attn --no-build-isolation
 ```
 
+### Issue: Hugging Face Rate Limits
+
+Download the dataset locally to avoid rate limits:
+
+```bash
+# Download to local storage
+python -c "
+from datasets import load_dataset
+ds = load_dataset('cerebras/SlimPajama-627B', split='train')
+ds.save_to_disk('~/datasets/SlimPajama-627B')
+"
+```
+
+Then set `local_path` in config:
+
+```yaml
+data:
+  local_path: "~/datasets/SlimPajama-627B"
+```
+
+### Issue: DeepSpeed installation fails
+
+```bash
+# Install DeepSpeed with proper CUDA
+uv pip install deepspeed>=0.14.0
+
+# If compilation fails, try pre-built wheels
+pip install deepspeed --no-build-isolation
+```
+
 ---
 
 ## Quick Reference
@@ -425,8 +561,14 @@ MAX_JOBS=4 uv pip install flash-attn --no-build-isolation
 # Activate environment
 source .venv/bin/activate
 
-# Start training
+# Start training (DeepSpeed - recommended)
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
+
+# Or use launch script
 ./scripts/launch_train.sh
+
+# Single GPU training
+python scripts/train.py --config configs/config_qwen3_4b.yaml
 
 # Evaluate
 python scripts/evaluate.py --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-10000
@@ -449,17 +591,27 @@ watch -n 1 nvidia-smi
 ```
 OrthGSA/
 ├── .venv/                   # uv virtual environment
-├── configs/                 # Configuration files
+├── configs/
+│   ├── config_qwen3_4b.yaml # Main training configuration
+│   └── deepspeed_zero2.json # DeepSpeed ZeRO-2 config (optional)
 ├── orthgsa/                 # Source code
 ├── outputs/                 # Training outputs
 ├── scripts/
 │   ├── setup_env.sh         # Environment setup script
 │   ├── launch_train.sh      # Training launch script
-│   ├── train.py             # Training script
+│   ├── train.py             # Single-GPU / DDP training script
+│   ├── train_deepspeed.py   # DeepSpeed multi-GPU training script (recommended)
 │   └── evaluate.py          # Evaluation script
 ├── pyproject.toml           # Project configuration (uv/pip)
 └── Getting_started.md       # This guide
 ```
+
+### Training Script Comparison
+
+| Script | Use Case | Memory Efficiency |
+|--------|----------|-------------------|
+| `train.py` | Single GPU, DDP with 80GB+ GPUs | Low (full model per GPU) |
+| `train_deepspeed.py` | Multi-GPU with 24-48GB GPUs | High (optimizer sharding) |
 
 ---
 

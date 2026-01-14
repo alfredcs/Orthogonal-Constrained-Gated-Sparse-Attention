@@ -1,0 +1,65 @@
+{
+  "os":  "Linux-6.8.0-1015-aws-x86_64-with-glibc2.35",
+  "python":  "CPython 3.11.5",
+  "startedAt":  "2026-01-13T22:50:55.057431Z",
+  "args":  [
+    "--config",
+    "configs/config_qwen3_4b.yaml"
+  ],
+  "program":  "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py",
+  "codePath":  "scripts/train.py",
+  "codePathLocal":  "scripts/train.py",
+  "git":  {
+    "remote":  "https://github.com/alfredcs/Orthogonal-Constrained-Gated-Sparse-Attention.git",
+    "commit":  "bdc2940700f9e067262fcd47c52d49c196f2973f"
+  },
+  "email":  "alfredcs919@gmail.com",
+  "root":  "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention",
+  "host":  "ip-172-31-25-183",
+  "executable":  "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/bin/python3",
+  "cpu_count":  48,
+  "cpu_count_logical":  96,
+  "gpu":  "NVIDIA L40S",
+  "gpu_count":  4,
+  "disk":  {
+    "/":  {
+      "total":  "1040442621952",
+      "used":  "560772968448"
+    }
+  },
+  "memory":  {
+    "total":  "800585674752"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada",
+      "uuid":  "GPU-2d2bfbed-316e-278e-d56b-ee50088e2611"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada",
+      "uuid":  "GPU-8e5bec30-7bbe-bc62-4dba-e4f24030c11e"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada",
+      "uuid":  "GPU-fb84ccec-bcfe-810e-d707-5e4338d60d61"
+    },
+    {
+      "name":  "NVIDIA L40S",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  18176,
+      "architecture":  "Ada",
+      "uuid":  "GPU-59495633-d4e7-d03d-0928-dc25d01ac906"
+    }
+  ],
+  "cudaVersion":  "13.1",
+  "writerId":  "7eeg1t27971hs5w4c9lz8q51fi18w356"
+}

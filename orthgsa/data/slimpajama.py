@@ -5,6 +5,7 @@ Efficiently loads the cerebras/SlimPajama-627B dataset for training.
 Uses streaming to handle the large dataset size.
 """
 
+import os
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 from transformers import AutoTokenizer, PreTrainedTokenizer
@@ -74,7 +75,7 @@ class DataCollatorForLanguageModeling:
 
         return {
             "input_ids": torch.tensor(batch_input_ids, dtype=torch.long),
-            "attention_mask": torch.tensor(batch_attention_mask, dtype=torch.long),
+            "attention_mask": torch.tensor(batch_attention_mask, dtype=torch.bool),
             "labels": torch.tensor(batch_labels, dtype=torch.long),
         }
 
@@ -110,7 +111,6 @@ class SlimPajamaDataset(IterableDataset):
             "cerebras/SlimPajama-627B",
             split=split,
             streaming=True,
-            trust_remote_code=True,
         )
 
         # Shuffle the dataset
@@ -171,6 +171,8 @@ class PackedSlimPajamaDataset(IterableDataset):
         rank: int = 0,
         world_size: int = 1,
         buffer_size: int = 10000,
+        dataset_name: str = "cerebras/SlimPajama-627B",
+        local_path: Optional[str] = None,
     ):
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -178,15 +180,33 @@ class PackedSlimPajamaDataset(IterableDataset):
         self.seed = seed
         self.rank = rank
         self.world_size = world_size
+        self.dataset_name = dataset_name
+        self.local_path = local_path
 
-        # Load dataset
-        logger.info(f"Loading SlimPajama-627B (streaming, packed, split={split})")
-        self.dataset = load_dataset(
-            "cerebras/SlimPajama-627B",
-            split=split,
-            streaming=True,
-            trust_remote_code=True,
-        )
+        # Load dataset from local path if available, otherwise from HuggingFace
+        if local_path:
+            expanded_path = os.path.expanduser(local_path)
+            if os.path.exists(expanded_path) and os.listdir(expanded_path):
+                logger.info(f"Loading from local path: {expanded_path} (streaming, packed, split={split})")
+                self.dataset = load_dataset(
+                    expanded_path,
+                    split=split,
+                    streaming=True,
+                )
+            else:
+                logger.info(f"Local path not found or empty, downloading {dataset_name} (streaming, packed, split={split})")
+                self.dataset = load_dataset(
+                    dataset_name,
+                    split=split,
+                    streaming=True,
+                )
+        else:
+            logger.info(f"Loading {dataset_name} (streaming, packed, split={split})")
+            self.dataset = load_dataset(
+                dataset_name,
+                split=split,
+                streaming=True,
+            )
         self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
 
         # EOS token for sequence separation
@@ -245,9 +265,11 @@ def get_slimpajama_dataloader(
     packed: bool = True,
     pin_memory: bool = True,
     prefetch_factor: int = 2,
+    dataset_name: str = "cerebras/SlimPajama-627B",
+    local_path: Optional[str] = None,
 ) -> DataLoader:
     """
-    Create DataLoader for SlimPajama dataset.
+    Create DataLoader for dataset.
 
     Args:
         tokenizer: Tokenizer to use
@@ -261,6 +283,8 @@ def get_slimpajama_dataloader(
         packed: Whether to use packed sequences
         pin_memory: Whether to pin memory
         prefetch_factor: Prefetch factor for DataLoader
+        dataset_name: Name of the dataset to load
+        local_path: Local path to pre-downloaded dataset (optional)
 
     Returns:
         DataLoader for the dataset
@@ -274,6 +298,8 @@ def get_slimpajama_dataloader(
             seed=seed,
             rank=rank,
             world_size=world_size,
+            dataset_name=dataset_name,
+            local_path=local_path,
         )
     else:
         dataset = SlimPajamaDataset(

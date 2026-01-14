@@ -1,14 +1,23 @@
 #!/bin/bash
 # OrthGSA Training Launch Script
-# For 4x 44GB GPUs (e.g., A100-44GB or A6000)
+# For multi-GPU training (e.g., 4x 44GB GPUs)
 # Uses Cayley Transform for orthogonal constraints instead of Sinkhorn-Knopp
+#
+# Training Methods:
+#   - DeepSpeed ZeRO-2 (default): ~17GB per GPU - recommended for 24-48GB GPUs
+#   - DDP (torchrun): ~44GB per GPU - use only with 80GB+ GPUs
+#
+# Usage:
+#   ./scripts/launch_train.sh                    # DeepSpeed (default)
+#   USE_DDP=1 ./scripts/launch_train.sh          # DDP (requires more memory)
+#   NUM_GPUS=2 ./scripts/launch_train.sh         # DeepSpeed with 2 GPUs
 
 set -e
 
 # Get the script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
+echo "cd $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
 # Activate uv virtual environment if it exists
@@ -31,9 +40,10 @@ export TOKENIZERS_PARALLELISM=false
 # Distributed training settings
 NUM_GPUS="${NUM_GPUS:-4}"
 MASTER_PORT="${MASTER_PORT:-29500}"
+USE_DDP="${USE_DDP:-0}"  # Set USE_DDP=1 to use DDP instead of DeepSpeed
 
 # Memory optimization
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+export PYTORCH_ALLOC_CONF=max_split_size_mb:512
 
 # Training configuration
 CONFIG_FILE="${CONFIG_FILE:-configs/config_qwen3_4b.yaml}"
@@ -52,16 +62,31 @@ echo "Python: $(which python)"
 echo "GPUs: $NUM_GPUS"
 echo "Config: $CONFIG_FILE"
 echo "Output: $OUTPUT_DIR"
-echo "============================================"
 
-# Launch distributed training with torchrun
-torchrun \
-    --nproc_per_node=$NUM_GPUS \
-    --master_port=$MASTER_PORT \
-    --nnodes=1 \
-    --node_rank=0 \
-    scripts/train.py \
-    --config "$CONFIG_FILE" \
-    "$@"
+if [ "$USE_DDP" = "1" ]; then
+    echo "Method: DDP (torchrun) - ~44GB/GPU"
+    echo "============================================"
+
+    # Launch distributed training with torchrun (DDP)
+    torchrun \
+        --nproc_per_node=$NUM_GPUS \
+        --master_port=$MASTER_PORT \
+        --nnodes=1 \
+        --node_rank=0 \
+        scripts/train.py \
+        --config "$CONFIG_FILE" \
+        "$@"
+else
+    echo "Method: DeepSpeed ZeRO-2 - ~17GB/GPU (recommended)"
+    echo "============================================"
+
+    # Launch distributed training with DeepSpeed ZeRO-2 (recommended)
+    deepspeed \
+        --num_gpus=$NUM_GPUS \
+        --master_port=$MASTER_PORT \
+        scripts/train_deepspeed.py \
+        --config "$CONFIG_FILE" \
+        "$@"
+fi
 
 echo "Training complete!"

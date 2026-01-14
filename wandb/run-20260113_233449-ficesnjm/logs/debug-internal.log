@@ -1,0 +1,11 @@
+{"time":"2026-01-13T23:34:49.580849985Z","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2026-01-13T23:34:49.783091861Z","level":"INFO","msg":"stream: created new stream","id":"ficesnjm"}
+{"time":"2026-01-13T23:34:49.783185626Z","level":"INFO","msg":"handler: started","stream_id":"ficesnjm"}
+{"time":"2026-01-13T23:34:49.783333616Z","level":"INFO","msg":"stream: started","id":"ficesnjm"}
+{"time":"2026-01-13T23:34:49.783358797Z","level":"INFO","msg":"writer: started","stream_id":"ficesnjm"}
+{"time":"2026-01-13T23:34:49.783366418Z","level":"INFO","msg":"sender: started","stream_id":"ficesnjm"}
+{"time":"2026-01-13T23:36:29.18318152Z","level":"INFO","msg":"stream: closing","id":"ficesnjm"}
+{"time":"2026-01-13T23:36:29.474394309Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2026-01-13T23:36:29.694638711Z","level":"INFO","msg":"handler: closed","stream_id":"ficesnjm"}
+{"time":"2026-01-13T23:36:29.69479584Z","level":"INFO","msg":"sender: closed","stream_id":"ficesnjm"}
+{"time":"2026-01-13T23:36:29.694807791Z","level":"INFO","msg":"stream: closed","id":"ficesnjm"}

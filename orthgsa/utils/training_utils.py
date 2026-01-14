@@ -125,15 +125,22 @@ def get_fsdp_config(
     prefetch = prefetch_map.get(backward_prefetch)
 
     # Auto wrap policy
+    # In PyTorch 2.0+, use functools.partial to create wrap policies
+    from functools import partial
+
     if auto_wrap_policy == "transformer":
         # Try to find transformer layer classes
         from ..models.orthgsa_layer import OrthGSALayer
 
-        wrap_policy = transformer_auto_wrap_policy(
+        wrap_policy = partial(
+            transformer_auto_wrap_policy,
             transformer_layer_cls={OrthGSALayer},
         )
     else:
-        wrap_policy = size_based_auto_wrap_policy(min_num_params=int(min_num_params))
+        wrap_policy = partial(
+            size_based_auto_wrap_policy,
+            min_num_params=int(min_num_params),
+        )
 
     return {
         "sharding_strategy": sharding,
@@ -329,6 +336,7 @@ def save_checkpoint(
     loss: float,
     output_dir: str,
     is_fsdp: bool = False,
+    is_ddp: bool = False,
     rank: int = 0,
 ) -> str:
     """
@@ -342,6 +350,7 @@ def save_checkpoint(
         loss: Current loss
         output_dir: Output directory
         is_fsdp: Whether model is wrapped with FSDP
+        is_ddp: Whether model is wrapped with DDP
         rank: Process rank
 
     Returns:
@@ -362,6 +371,10 @@ def save_checkpoint(
             model_state = model.state_dict()
             if rank == 0:
                 torch.save(model_state, os.path.join(checkpoint_dir, "model.pt"))
+    elif is_ddp:
+        # For DDP, access the underlying model via .module
+        if rank == 0:
+            torch.save(model.module.state_dict(), os.path.join(checkpoint_dir, "model.pt"))
     else:
         if rank == 0:
             torch.save(model.state_dict(), os.path.join(checkpoint_dir, "model.pt"))
@@ -395,6 +408,7 @@ def load_checkpoint(
     scheduler: torch.optim.lr_scheduler.LRScheduler,
     checkpoint_dir: str,
     is_fsdp: bool = False,
+    is_ddp: bool = False,
 ) -> int:
     """
     Load training checkpoint.
@@ -412,6 +426,9 @@ def load_checkpoint(
                 StateDictType.FULL_STATE_DICT,
             ):
                 model.load_state_dict(model_state)
+        elif is_ddp:
+            # For DDP, load into the underlying model via .module
+            model.module.load_state_dict(model_state)
         else:
             model.load_state_dict(model_state)
         logger.info(f"Loaded model from {model_path}")

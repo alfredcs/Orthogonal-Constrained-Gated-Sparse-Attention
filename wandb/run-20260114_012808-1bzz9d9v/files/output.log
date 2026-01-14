@@ -1,0 +1,13 @@
+2026-01-14 01:28:09 - INFO - __main__ - Wandb initialized: https://wandb.ai/alfredcs_team/orthgsa-qwen3-4b/runs/1bzz9d9v
+2026-01-14 01:28:10 - INFO - __main__ - Loading model: Qwen/Qwen3-4B-Instruct-2507
+2026-01-14 01:28:10 - INFO - orthgsa.models.orthgsa_model - Loading base model: Qwen/Qwen3-4B-Instruct-2507
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:00<00:00, 73.59it/s]
+2026-01-14 01:28:10 - INFO - orthgsa.models.orthgsa_model - OrthGSA model initialized with 4 streams
+2026-01-14 01:28:10 - INFO - __main__ - Model parameters: 4031.69M total, 4031.69M trainable
+2026-01-14 01:28:10 - INFO - __main__ - Gradient checkpointing enabled
+2026-01-14 01:28:12 - INFO - orthgsa.utils.training_utils - Optimizer groups: 397 decay params, 363 no-decay params
+2026-01-14 01:28:12 - INFO - orthgsa.utils.training_utils - Using fused AdamW optimizer
+2026-01-14 01:28:12 - INFO - orthgsa.utils.training_utils - LR scheduler: cosine, warmup=3000, total=100000
+2026-01-14 01:28:12 - INFO - orthgsa.data.slimpajama - Loading from local path: /home/alfred/datasets/SlimPajama-627B (streaming, packed, split=train)
+2026-01-14 01:30:15 - INFO - orthgsa.data.slimpajama - Loading from local path: /home/alfred/datasets/SlimPajama-627B (streaming, packed, split=train)

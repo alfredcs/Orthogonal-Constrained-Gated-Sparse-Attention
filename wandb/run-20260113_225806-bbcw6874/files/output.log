@@ -1,0 +1,51 @@
+2026-01-13 22:58:11 - INFO - __main__ - Wandb initialized: https://wandb.ai/alfredcs_team/orthgsa-qwen3-4b/runs/bbcw6874
+2026-01-13 22:58:12 - INFO - __main__ - Loading model: Qwen/Qwen3-4B-Instruct-2507
+2026-01-13 22:58:12 - INFO - orthgsa.models.orthgsa_model - Loading base model: Qwen/Qwen3-4B-Instruct-2507
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:00<00:00, 71.72it/s]
+2026-01-13 22:58:12 - INFO - orthgsa.models.orthgsa_model - OrthGSA model initialized with 4 streams
+2026-01-13 22:58:12 - INFO - __main__ - Model parameters: 4031.69M total, 4031.69M trainable
+2026-01-13 22:58:12 - INFO - __main__ - Gradient checkpointing enabled
+2026-01-13 22:58:16 - INFO - __main__ - Model wrapped with FSDP
+2026-01-13 22:58:16 - INFO - orthgsa.utils.training_utils - Optimizer groups: 0 decay params, 760 no-decay params
+2026-01-13 22:58:16 - INFO - orthgsa.utils.training_utils - Using fused AdamW optimizer
+2026-01-13 22:58:16 - INFO - orthgsa.utils.training_utils - LR scheduler: cosine, warmup=3000, total=100000
+2026-01-13 22:58:16 - INFO - orthgsa.data.slimpajama - Loading SlimPajama-627B (streaming, packed, split=train)
+Resolving data files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 59166/59166 [00:01<00:00, 49370.53it/s]
+Resolving data files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31428/31428 [00:00<00:00, 49597.33it/s]
+Resolving data files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31411/31411 [00:00<00:00, 52401.09it/s]
+2026-01-13 22:59:48 - INFO - orthgsa.data.slimpajama - Loading SlimPajama-627B (streaming, packed, split=train)
+Resolving data files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 59166/59166 [00:01<00:00, 52342.00it/s]
+Resolving data files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31428/31428 [00:00<00:00, 51733.29it/s]
+Resolving data files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31411/31411 [00:00<00:00, 51284.77it/s]
+/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py:308: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = GradScaler() if training_config.get("bf16", True) else None
+2026-01-13 23:00:10 - INFO - __main__ - Starting training...
+Training:   0%|                                                                                                                                                                     | 0/100000 [00:00<?, ?it/s]/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py:114: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
+Traceback (most recent call last):
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 451, in <module>
+    main()
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 353, in main
+    step_metrics = train_step(
+                   ^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 114, in train_step
+    with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/typing_extensions.py", line 3004, in wrapper
+    return arg(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^
+TypeError: autocast.__init__() got an unexpected keyword argument 'device_type'
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 451, in <module>
+[rank0]:     main()
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 353, in main
+[rank0]:     step_metrics = train_step(
+[rank0]:                    ^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 114, in train_step
+[rank0]:     with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/typing_extensions.py", line 3004, in wrapper
+[rank0]:     return arg(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^
+[rank0]: TypeError: autocast.__init__() got an unexpected keyword argument 'device_type'

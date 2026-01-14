@@ -23,8 +23,8 @@ from datetime import datetime
 
 import torch
 import torch.distributed as dist
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.cuda.amp import GradScaler, autocast
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.amp import GradScaler, autocast
 from transformers import AutoTokenizer
 import yaml
 from tqdm import tqdm
@@ -45,8 +45,6 @@ from orthgsa.utils import (
     count_parameters,
     estimate_memory_usage,
     get_gpu_memory_info,
-    get_fsdp_config,
-    wrap_model_fsdp,
 )
 
 # Setup logging
@@ -111,7 +109,7 @@ def train_step(
     batch = {k: v.to(device) for k, v in batch.items()}
 
     # Forward pass with mixed precision
-    with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
+    with autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
         outputs = model(
             input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
@@ -149,7 +147,7 @@ def evaluate(
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
-            with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
+            with autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 outputs = model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
@@ -241,18 +239,19 @@ def main():
             model.base_model.gradient_checkpointing_enable()
             logger.info("Gradient checkpointing enabled")
 
-    # Wrap with FSDP for distributed training
+    # Move model to device and wrap with DDP for distributed training
+    model = model.to(device)
+
     if distributed:
-        fsdp_config = get_fsdp_config(
+        # Use DDP instead of FSDP for compatibility with OrthGSA's layer references
+        model = DDP(
             model,
-            sharding_strategy=config["distributed"]["fsdp_config"]["sharding_strategy"],
-            use_bf16=config["training"]["bf16"],
-            backward_prefetch=config["distributed"]["fsdp_config"]["backward_prefetch"],
+            device_ids=[local_rank],
+            output_device=local_rank,
+            find_unused_parameters=True,  # OrthGSA may have unused parameters in some code paths
+            static_graph=True,  # Required for gradient checkpointing compatibility
         )
-        model = wrap_model_fsdp(model, **fsdp_config)
-        logger.info("Model wrapped with FSDP")
-    else:
-        model = model.to(device)
+        logger.info("Model wrapped with DDP")
 
     # Create optimizer
     training_config = config["training"]
@@ -275,6 +274,8 @@ def main():
 
     # Create data loaders
     data_config = config["data"]
+    dataset_name = data_config.get("dataset", "cerebras/SlimPajama-627B")
+    local_path = data_config.get("local_path")
     train_dataloader = get_slimpajama_dataloader(
         tokenizer=tokenizer,
         batch_size=training_config["per_device_train_batch_size"],
@@ -285,6 +286,8 @@ def main():
         rank=rank,
         world_size=world_size,
         packed=True,
+        dataset_name=dataset_name,
+        local_path=local_path,
     )
 
     # Optional evaluation dataloader
@@ -302,17 +305,22 @@ def main():
             rank=rank,
             world_size=world_size,
             packed=True,
+            dataset_name=dataset_name,
+            local_path=local_path,
         )
 
     # Gradient scaler for mixed precision
-    scaler = GradScaler() if training_config.get("bf16", True) else None
+    # Note: GradScaler is not needed for BFloat16 (only for Float16)
+    # BFloat16 has larger dynamic range and doesn't require loss scaling
+    use_fp16 = training_config.get("fp16", False)
+    scaler = GradScaler("cuda") if use_fp16 else None
 
     # Resume from checkpoint if specified
     start_step = 0
     if args.resume:
         start_step = load_checkpoint(
             model, optimizer, scheduler, args.resume,
-            is_fsdp=distributed,
+            is_ddp=distributed,
         )
         logger.info(f"Resumed from step {start_step}")
 
@@ -418,7 +426,7 @@ def main():
                 step=global_step,
                 loss=avg_loss if "avg_loss" in dir() else 0,
                 output_dir=output_dir,
-                is_fsdp=distributed,
+                is_ddp=distributed,
                 rank=rank,
             )
 
@@ -433,7 +441,7 @@ def main():
             step=global_step,
             loss=avg_loss if "avg_loss" in dir() else 0,
             output_dir=output_dir,
-            is_fsdp=distributed,
+            is_ddp=distributed,
             rank=rank,
         )
 

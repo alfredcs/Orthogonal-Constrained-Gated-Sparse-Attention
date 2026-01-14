@@ -1,0 +1,40 @@
+2026-01-14 01:56:18 - INFO - __main__ - Wandb initialized: https://wandb.ai/alfredcs_team/orthgsa-qwen3-4b/runs/9u1y5iol
+2026-01-14 01:56:18 - INFO - __main__ - Loading model: Qwen/Qwen3-4B-Instruct-2507
+2026-01-14 01:56:18 - INFO - orthgsa.models.orthgsa_model - Loading base model: Qwen/Qwen3-4B-Instruct-2507
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:00<00:00, 61.19it/s]
+2026-01-14 01:56:19 - INFO - orthgsa.models.orthgsa_model - OrthGSA model initialized with 4 streams
+2026-01-14 01:56:19 - INFO - __main__ - Model parameters: 4031.69M total, 4031.69M trainable
+2026-01-14 01:56:19 - INFO - __main__ - Gradient checkpointing enabled
+2026-01-14 01:56:19 - INFO - orthgsa.data.slimpajama - Loading from local path: /home/alfred/datasets/SlimPajama-627B (streaming, packed, split=train)
+2026-01-14 01:58:50 - INFO - orthgsa.data.slimpajama - Loading from local path: /home/alfred/datasets/SlimPajama-627B (streaming, packed, split=train)
+Traceback (most recent call last):
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train_deepspeed.py", line 369, in <module>
+    main()
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train_deepspeed.py", line 261, in main
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+                                               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/deepspeed/__init__.py", line 203, in initialize
+    engine = DeepSpeedEngine(args=args,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 368, in __init__
+    self.optimizer = self._configure_zero_optimizer(optimizer=None)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 1812, in _configure_zero_optimizer
+    assert not isinstance(optimizer, DummyOptim), "zero stage {} requires an optimizer".format(zero_stage)
+AssertionError: zero stage 2 requires an optimizer
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train_deepspeed.py", line 369, in <module>
+[rank0]:     main()
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train_deepspeed.py", line 261, in main
+[rank0]:     model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+[rank0]:                                                ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/deepspeed/__init__.py", line 203, in initialize
+[rank0]:     engine = DeepSpeedEngine(args=args,
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 368, in __init__
+[rank0]:     self.optimizer = self._configure_zero_optimizer(optimizer=None)
+[rank0]:                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/deepspeed/runtime/engine.py", line 1812, in _configure_zero_optimizer
+[rank0]:     assert not isinstance(optimizer, DummyOptim), "zero stage {} requires an optimizer".format(zero_stage)
+[rank0]: AssertionError: zero stage 2 requires an optimizer

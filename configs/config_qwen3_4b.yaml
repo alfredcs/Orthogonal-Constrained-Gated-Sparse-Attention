@@ -23,18 +23,22 @@ model:
     gate_bias_init: 0.5             # Initial gate bias
 
 # Data Configuration
+# Supports both streaming from HuggingFace and pre-downloaded local datasets
+# Local path is used automatically if the directory exists and is not empty
+# To download locally: python -c "from datasets import load_dataset; load_dataset('cerebras/SlimPajama-627B').save_to_disk('~/datasets/SlimPajama-627B')"
 data:
   dataset: "cerebras/SlimPajama-627B"
-  max_seq_length: 2048              # Sequence length
-  num_workers: 4                    # DataLoader workers per GPU
+  local_path: "~/datasets/SlimPajama-627B"  # Pre-downloaded dataset path (recommended to avoid rate limits)
+  max_seq_length: 1024              # Reduced sequence length for memory (increase for longer context)
+  num_workers: 2                    # DataLoader workers per GPU (reduced for local loading)
   streaming: true                   # Use streaming for large dataset
 
 # Training Configuration
 training:
-  # Batch sizes optimized for 4x44GB GPUs
-  per_device_train_batch_size: 4    # Per GPU batch size
-  per_device_eval_batch_size: 8     # Larger for eval (no gradients)
-  gradient_accumulation_steps: 8    # Effective batch = 4*4*8 = 128
+  # Batch sizes reduced for 4x44GB GPUs with n_streams=4
+  per_device_train_batch_size: 1    # Per GPU batch size (reduced for memory)
+  per_device_eval_batch_size: 2     # Larger for eval (no gradients)
+  gradient_accumulation_steps: 32   # Effective batch = 4*1*32 = 128
 
   # Learning rate (scaled for effective batch size)
   learning_rate: 2.0e-5             # Peak learning rate
@@ -61,8 +65,26 @@ training:
   adam_epsilon: 1.0e-8
 
 # Distributed Training Configuration
+# For multi-GPU training, we recommend DeepSpeed ZeRO-2 over DDP/FSDP
+# DeepSpeed ZeRO-2 reduces memory from ~44GB to ~17GB per GPU (for 4B model)
+#
+# Training methods comparison:
+#   - DDP (torchrun + train.py): ~44GB/GPU - requires 80GB+ GPUs
+#   - DeepSpeed ZeRO-2 (deepspeed + train_deepspeed.py): ~17GB/GPU - recommended
+#   - DeepSpeed ZeRO-3: ~12GB/GPU - for very memory-constrained setups
+#
+# Launch commands:
+#   DeepSpeed: deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
+#   DDP:       torchrun --nproc_per_node=4 scripts/train.py --config configs/config_qwen3_4b.yaml
 distributed:
-  strategy: "fsdp"                  # Use FSDP for 4 GPUs
+  strategy: "deepspeed"             # Recommended: use DeepSpeed for multi-GPU
+  # Alternative: "fsdp" or "ddp" (requires more memory per GPU)
+
+  # DeepSpeed config is embedded in train_deepspeed.py
+  # Key settings: ZeRO stage 2, optimizer sharding, BF16
+  deepspeed_config: null            # Uses embedded config in train_deepspeed.py
+
+  # FSDP config (alternative, used with train.py)
   fsdp_config:
     sharding_strategy: "FULL_SHARD" # Full sharding
     cpu_offload: false              # Keep on GPU for speed
@@ -72,9 +94,6 @@ distributed:
     forward_prefetch: true
     sync_module_states: true
     use_orig_params: true
-
-  # DeepSpeed alternative (if needed)
-  deepspeed_config: null
 
 # Memory Optimization
 memory:
@@ -116,7 +135,7 @@ checkpointing:
 evaluation:
   do_eval: true
   eval_strategy: "steps"
-  per_device_eval_batch_size: 8
+  per_device_eval_batch_size: 2
   eval_accumulation_steps: 4
 
 # Seed for reproducibility

@@ -84,10 +84,10 @@ class ManifoldHyperConnection(nn.Module):
         self.b_post = nn.Parameter(torch.ones(n_streams))  # Uniform distribution
         self.b_res = nn.Parameter(torch.zeros(n_streams, n_streams))  # Identity via Cayley
 
-        # Scaling factors (alpha)
-        self.alpha_pre = nn.Parameter(torch.tensor(alpha_init))
-        self.alpha_post = nn.Parameter(torch.tensor(alpha_init))
-        self.alpha_res = nn.Parameter(torch.tensor(alpha_init))
+        # Scaling factors (alpha) - use 1D tensors for FSDP compatibility
+        self.alpha_pre = nn.Parameter(torch.tensor([alpha_init]))
+        self.alpha_post = nn.Parameter(torch.tensor([alpha_init]))
+        self.alpha_res = nn.Parameter(torch.tensor([alpha_init]))
 
         # Initialize projections to zero for identity-like behavior at start
         self._init_weights()

@@ -1,0 +1,11 @@
+{"time":"2026-01-13T22:58:07.125845584Z","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2026-01-13T22:58:07.333260864Z","level":"INFO","msg":"stream: created new stream","id":"bbcw6874"}
+{"time":"2026-01-13T22:58:07.33335822Z","level":"INFO","msg":"handler: started","stream_id":"bbcw6874"}
+{"time":"2026-01-13T22:58:07.333453074Z","level":"INFO","msg":"stream: started","id":"bbcw6874"}
+{"time":"2026-01-13T22:58:07.333470246Z","level":"INFO","msg":"writer: started","stream_id":"bbcw6874"}
+{"time":"2026-01-13T22:58:07.333483496Z","level":"INFO","msg":"sender: started","stream_id":"bbcw6874"}
+{"time":"2026-01-13T23:00:20.670634504Z","level":"INFO","msg":"stream: closing","id":"bbcw6874"}
+{"time":"2026-01-13T23:00:21.005150976Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2026-01-13T23:00:21.244214257Z","level":"INFO","msg":"handler: closed","stream_id":"bbcw6874"}
+{"time":"2026-01-13T23:00:21.244336065Z","level":"INFO","msg":"sender: closed","stream_id":"bbcw6874"}
+{"time":"2026-01-13T23:00:21.244357676Z","level":"INFO","msg":"stream: closed","id":"bbcw6874"}

@@ -1,0 +1,40 @@
+2026-01-13 23:59:20 - INFO - __main__ - Wandb initialized: https://wandb.ai/alfredcs_team/orthgsa-qwen3-4b/runs/zci2nxek
+2026-01-13 23:59:21 - INFO - __main__ - Loading model: Qwen/Qwen3-4B-Instruct-2507
+2026-01-13 23:59:21 - INFO - orthgsa.models.orthgsa_model - Loading base model: Qwen/Qwen3-4B-Instruct-2507
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:00<00:00, 68.07it/s]
+2026-01-13 23:59:21 - INFO - orthgsa.models.orthgsa_model - OrthGSA model initialized with 4 streams
+2026-01-13 23:59:21 - INFO - __main__ - Model parameters: 4031.69M total, 4031.69M trainable
+2026-01-13 23:59:21 - INFO - __main__ - Gradient checkpointing enabled
+2026-01-13 23:59:23 - INFO - __main__ - Model wrapped with DDP
+2026-01-13 23:59:23 - INFO - orthgsa.utils.training_utils - Optimizer groups: 397 decay params, 363 no-decay params
+2026-01-13 23:59:23 - INFO - orthgsa.utils.training_utils - Using fused AdamW optimizer
+2026-01-13 23:59:23 - INFO - orthgsa.utils.training_utils - LR scheduler: cosine, warmup=3000, total=100000
+2026-01-13 23:59:23 - INFO - orthgsa.data.slimpajama - Loading cerebras/SlimPajama-627B (streaming, packed, split=train)
+2026-01-14 00:00:37 - INFO - orthgsa.data.slimpajama - Loading cerebras/SlimPajama-627B (streaming, packed, split=train)
+2026-01-14 00:00:59 - INFO - __main__ - Starting training...
+Training:   0%|                                                                                                                                                          | 0/100000 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 455, in <module>
+    main()
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 357, in main
+    step_metrics = train_step(
+                   ^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 124, in train_step
+    loss.backward()
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/_tensor.py", line 625, in backward
+    torch.autograd.backward(
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/autograd/__init__.py", line 354, in backward
+    _engine_run_backward(
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/autograd/graph.py", line 841, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/autograd/function.py", line 315, in apply
+    return user_fn(self, *args)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/utils/checkpoint.py", line 319, in backward
+    torch.autograd.backward(outputs_with_grad, args_with_grad)
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/autograd/__init__.py", line 354, in backward
+    _engine_run_backward(
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/autograd/graph.py", line 841, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,176 @@
+_wandb:
+    value:
+        cli_version: 0.23.1
+        e:
+            5uo2slzbg172k6tsszimv96dn0j4jeja:
+                args:
+                    - --config
+                    - configs/config_qwen3_4b.yaml
+                codePath: scripts/train.py
+                codePathLocal: scripts/train.py
+                cpu_count: 48
+                cpu_count_logical: 96
+                cudaVersion: "13.1"
+                disk:
+                    /:
+                        total: "1040442621952"
+                        used: "560801816576"
+                email: alfredcs919@gmail.com
+                executable: /home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/bin/python3
+                git:
+                    commit: bdc2940700f9e067262fcd47c52d49c196f2973f
+                    remote: https://github.com/alfredcs/Orthogonal-Constrained-Gated-Sparse-Attention.git
+                gpu: NVIDIA L40S
+                gpu_count: 4
+                gpu_nvidia:
+                    - architecture: Ada
+                      cudaCores: 18176
+                      memoryTotal: "48305799168"
+                      name: NVIDIA L40S
+                      uuid: GPU-2d2bfbed-316e-278e-d56b-ee50088e2611
+                    - architecture: Ada
+                      cudaCores: 18176
+                      memoryTotal: "48305799168"
+                      name: NVIDIA L40S
+                      uuid: GPU-8e5bec30-7bbe-bc62-4dba-e4f24030c11e
+                    - architecture: Ada
+                      cudaCores: 18176
+                      memoryTotal: "48305799168"
+                      name: NVIDIA L40S
+                      uuid: GPU-fb84ccec-bcfe-810e-d707-5e4338d60d61
+                    - architecture: Ada
+                      cudaCores: 18176
+                      memoryTotal: "48305799168"
+                      name: NVIDIA L40S
+                      uuid: GPU-59495633-d4e7-d03d-0928-dc25d01ac906
+                host: ip-172-31-25-183
+                memory:
+                    total: "800585674752"
+                os: Linux-6.8.0-1015-aws-x86_64-with-glibc2.35
+                program: /home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py
+                python: CPython 3.11.5
+                root: /home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention
+                startedAt: "2026-01-13T23:17:32.796551Z"
+                writerId: 5uo2slzbg172k6tsszimv96dn0j4jeja
+        m: []
+        python_version: 3.11.5
+        t:
+            "1":
+                - 1
+                - 11
+                - 41
+                - 49
+                - 51
+                - 71
+            "2":
+                - 1
+                - 11
+                - 41
+                - 49
+                - 51
+                - 71
+            "3":
+                - 13
+                - 15
+                - 16
+            "4": 3.11.5
+            "5": 0.23.1
+            "6": 4.57.5
+            "8":
+                - 2
+            "12": 0.23.1
+            "13": linux-x86_64
+checkpointing:
+    value:
+        resume_from_checkpoint: null
+        save_on_each_node: false
+        save_total_limit: 3
+data:
+    value:
+        dataset: cerebras/SlimPajama-627B
+        max_seq_length: 2048
+        num_workers: 4
+        streaming: true
+distributed:
+    value:
+        deepspeed_config: null
+        fsdp_config:
+            backward_prefetch: BACKWARD_PRE
+            cpu_offload: false
+            forward_prefetch: true
+            limit_all_gathers: true
+            sharding_strategy: FULL_SHARD
+            state_dict_type: FULL_STATE_DICT
+            sync_module_states: true
+            use_orig_params: true
+        strategy: fsdp
+evaluation:
+    value:
+        do_eval: true
+        eval_accumulation_steps: 4
+        eval_strategy: steps
+        per_device_eval_batch_size: 8
+logging:
+    value:
+        logging_dir: ./logs
+        output_dir: ./outputs/orthgsa-qwen3-4b
+        report_to:
+            - wandb
+            - tensorboard
+        wandb:
+            enabled: true
+            entity: null
+            log_model: false
+            project: orthgsa-qwen3-4b
+            run_name: null
+            tags:
+                - orthgsa
+                - qwen3-4b
+                - slimpajama
+                - cayley-transform
+memory:
+    value:
+        activation_checkpointing: true
+        auto_find_batch_size: false
+        checkpoint_layers: all
+        target_memory_utilization: 0.68
+        use_flash_attention: true
+model:
+    value:
+        base_model: Qwen/Qwen3-4B-Instruct-2507
+        gsa:
+            adaptive_k: true
+            enabled: true
+            gate_bias_init: 0.5
+            indexer_dim: 64
+            indexer_heads: 4
+            k_base: 512
+            k_max: 1024
+            k_min: 128
+        orthgsa:
+            alpha_init: 0.01
+            cayley_scaling: 0.1
+            n_streams: 4
+seed:
+    value: 42
+training:
+    value:
+        adam_beta1: 0.9
+        adam_beta2: 0.95
+        adam_epsilon: 1e-08
+        bf16: true
+        eval_steps: 1000
+        gradient_accumulation_steps: 8
+        gradient_checkpointing: true
+        learning_rate: 2e-05
+        logging_steps: 10
+        lr_scheduler_type: cosine
+        max_grad_norm: 1
+        max_steps: 100000
+        optim: adamw_torch_fused
+        per_device_eval_batch_size: 8
+        per_device_train_batch_size: 4
+        save_steps: 2000
+        tf32: true
+        warmup_ratio: 0.03
+        weight_decay: 0.1

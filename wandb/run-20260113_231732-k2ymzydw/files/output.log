@@ -1,0 +1,185 @@
+2026-01-13 23:17:33 - INFO - __main__ - Wandb initialized: https://wandb.ai/alfredcs_team/orthgsa-qwen3-4b/runs/k2ymzydw
+2026-01-13 23:17:34 - INFO - __main__ - Loading model: Qwen/Qwen3-4B-Instruct-2507
+2026-01-13 23:17:34 - INFO - orthgsa.models.orthgsa_model - Loading base model: Qwen/Qwen3-4B-Instruct-2507
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:00<00:00, 71.05it/s]
+2026-01-13 23:17:34 - INFO - orthgsa.models.orthgsa_model - OrthGSA model initialized with 4 streams
+2026-01-13 23:17:34 - INFO - __main__ - Model parameters: 4031.69M total, 4031.69M trainable
+2026-01-13 23:17:34 - INFO - __main__ - Gradient checkpointing enabled
+2026-01-13 23:17:38 - INFO - __main__ - Model wrapped with FSDP
+2026-01-13 23:17:38 - INFO - orthgsa.utils.training_utils - Optimizer groups: 0 decay params, 760 no-decay params
+2026-01-13 23:17:38 - INFO - orthgsa.utils.training_utils - Using fused AdamW optimizer
+2026-01-13 23:17:38 - INFO - orthgsa.utils.training_utils - LR scheduler: cosine, warmup=3000, total=100000
+2026-01-13 23:17:38 - INFO - orthgsa.data.slimpajama - Loading cerebras/SlimPajama-627B (streaming, packed, split=train)
+Resolving data files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 59166/59166 [00:01<00:00, 51969.26it/s]
+Resolving data files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31428/31428 [00:00<00:00, 52479.37it/s]
+Resolving data files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31411/31411 [00:00<00:00, 52108.32it/s]
+2026-01-13 23:18:33 - INFO - orthgsa.data.slimpajama - Loading cerebras/SlimPajama-627B (streaming, packed, split=train)
+Resolving data files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 59166/59166 [00:01<00:00, 53055.53it/s]
+Resolving data files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31428/31428 [00:00<00:00, 51907.81it/s]
+Resolving data files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 31411/31411 [00:00<00:00, 52375.82it/s]
+2026-01-13 23:18:55 - INFO - __main__ - Starting training...
+Training:   0%|                                                                                                                                                                           | 0/100000 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 454, in <module>
+    main()
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 356, in main
+    step_metrics = train_step(
+                   ^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 115, in train_step
+    outputs = model(
+              ^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/distributed/fsdp/fully_sharded_data_parallel.py", line 851, in forward
+    output = self._fsdp_wrapped_module(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/orthgsa/models/orthgsa_model.py", line 357, in forward
+    hidden_states = mhc(hidden_states, layer_fn)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/orthgsa/layers/mhc.py", line 210, in forward
+    z = sublayer_fn(y, **sublayer_kwargs)  # [B, L, C]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/orthgsa/models/orthgsa_model.py", line 346, in layer_fn
+    outputs = layer(
+              ^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/modeling_layers.py", line 93, in __call__
+    return self._gradient_checkpointing_func(partial(super().__call__, **kwargs), *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/_compile.py", line 53, in inner
+    return disable_fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 1044, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/utils/checkpoint.py", line 496, in checkpoint
+    return CheckpointFunction.apply(function, preserve, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/autograd/function.py", line 581, in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/utils/checkpoint.py", line 262, in forward
+    outputs = run_function(*args)
+              ^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/models/qwen3/modeling_qwen3.py", line 260, in forward
+    hidden_states, _ = self.self_attn(
+                       ^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/models/qwen3/modeling_qwen3.py", line 204, in forward
+    cos, sin = position_embeddings
+    ^^^^^^^^
+TypeError: cannot unpack non-iterable NoneType object
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 454, in <module>
+[rank0]:     main()
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 356, in main
+[rank0]:     step_metrics = train_step(
+[rank0]:                    ^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/scripts/train.py", line 115, in train_step
+[rank0]:     outputs = model(
+[rank0]:               ^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/distributed/fsdp/fully_sharded_data_parallel.py", line 851, in forward
+[rank0]:     output = self._fsdp_wrapped_module(*args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/orthgsa/models/orthgsa_model.py", line 357, in forward
+[rank0]:     hidden_states = mhc(hidden_states, layer_fn)
+[rank0]:                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/orthgsa/layers/mhc.py", line 210, in forward
+[rank0]:     z = sublayer_fn(y, **sublayer_kwargs)  # [B, L, C]
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/orthgsa/models/orthgsa_model.py", line 346, in layer_fn
+[rank0]:     outputs = layer(
+[rank0]:               ^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/modeling_layers.py", line 93, in __call__
+[rank0]:     return self._gradient_checkpointing_func(partial(super().__call__, **kwargs), *args)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/_compile.py", line 53, in inner
+[rank0]:     return disable_fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 1044, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/utils/checkpoint.py", line 496, in checkpoint
+[rank0]:     return CheckpointFunction.apply(function, preserve, *args)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/autograd/function.py", line 581, in apply
+[rank0]:     return super().apply(*args, **kwargs)  # type: ignore[misc]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/utils/checkpoint.py", line 262, in forward
+[rank0]:     outputs = run_function(*args)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/models/qwen3/modeling_qwen3.py", line 260, in forward
+[rank0]:     hidden_states, _ = self.self_attn(
+[rank0]:                        ^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/alfred/codes/Orthogonal-Constrained-Gated-Sparse-Attention/.venv/lib/python3.11/site-packages/transformers/models/qwen3/modeling_qwen3.py", line 204, in forward
+[rank0]:     cos, sin = position_embeddings
+[rank0]:     ^^^^^^^^
+[rank0]: TypeError: cannot unpack non-iterable NoneType object
