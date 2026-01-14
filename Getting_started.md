@@ -403,16 +403,72 @@ torchrun \
 
 ### Step 6.5: Resume Training
 
-```bash
-# Resume DeepSpeed training
-deepspeed --num_gpus=4 scripts/train_deepspeed.py \
-    --config configs/config_qwen3_4b.yaml \
-    --resume outputs/orthgsa-qwen3-4b/checkpoint-10000
+OrthGSA provides a dedicated script for resuming DeepSpeed training from checkpoints.
 
-# Resume DDP training
+#### Auto-Resume from Latest Checkpoint (Recommended)
+
+The `resume_deepspeed.py` script automatically finds and resumes from the latest checkpoint:
+
+```bash
+# Auto-detect and resume from the latest checkpoint in the output directory
+deepspeed --num_gpus=4 scripts/resume_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml
+
+# Single GPU
+python scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml
+```
+
+**Key Features of `resume_deepspeed.py`:**
+
+1. **Auto-detection**: Scans the output directory for `checkpoint-{step}` folders and automatically selects the one with the highest step number
+2. **Checkpoint Loading**: Uses DeepSpeed's native `load_checkpoint()` to restore model weights, optimizer states, and learning rate scheduler
+3. **DataLoader Fast-forwarding**: Approximates the correct position in the dataset by skipping batches
+4. **W&B Integration**: Marks resumed runs with `-resumed-{step}` suffix for easy identification
+5. **Progress Tracking**: Progress bar starts from the resumed step, showing accurate completion percentage
+
+#### Resume from a Specific Checkpoint
+
+To resume from a specific checkpoint instead of the latest:
+
+```bash
+# Specify exact checkpoint path
+deepspeed --num_gpus=4 scripts/resume_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml \
+    --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-5000
+```
+
+#### Resume DDP Training
+
+For DDP (torchrun) training, use the `--resume` flag with `train.py`:
+
+```bash
+# Resume DDP training from specific checkpoint
 python scripts/train.py \
     --config configs/config_qwen3_4b.yaml \
     --resume outputs/orthgsa-qwen3-4b/checkpoint-10000
+
+# Multi-GPU DDP resume
+torchrun --nproc_per_node=4 scripts/train.py \
+    --config configs/config_qwen3_4b.yaml \
+    --resume outputs/orthgsa-qwen3-4b/checkpoint-10000
+```
+
+#### Checkpoint Structure
+
+Checkpoints are saved in the output directory with the following structure:
+
+```
+outputs/orthgsa-qwen3-4b/
+├── checkpoint-1000/
+│   ├── global_step1000/      # DeepSpeed checkpoint files
+│   │   ├── mp_rank_00_model_states.pt
+│   │   ├── zero_pp_rank_0_mp_rank_00_optim_states.pt
+│   │   └── ...
+│   └── latest                # Marker file
+├── checkpoint-2000/
+│   └── ...
+└── checkpoint-3000/
+    └── ...
 ```
 
 ### Step 6.6: Monitor Training
@@ -597,6 +653,13 @@ deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_
 # Or use launch script
 ./scripts/launch_train.sh
 
+# Resume training from latest checkpoint
+deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml
+
+# Resume from specific checkpoint
+deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml \
+    --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-5000
+
 # Single GPU training
 python scripts/train.py --config configs/config_qwen3_4b.yaml
 
@@ -631,6 +694,7 @@ OrthGSA/
 │   ├── launch_train.sh      # Training launch script
 │   ├── train.py             # Single-GPU / DDP training script
 │   ├── train_deepspeed.py   # DeepSpeed multi-GPU training script (recommended)
+│   ├── resume_deepspeed.py  # Resume training from checkpoint (DeepSpeed)
 │   └── evaluate.py          # Evaluation script
 ├── pyproject.toml           # Project configuration (uv/pip)
 └── Getting_started.md       # This guide
@@ -642,6 +706,7 @@ OrthGSA/
 |--------|----------|-------------------|
 | `train.py` | Single GPU, DDP with 80GB+ GPUs | Low (full model per GPU) |
 | `train_deepspeed.py` | Multi-GPU with 24-48GB GPUs | High (optimizer sharding) |
+| `resume_deepspeed.py` | Resume DeepSpeed training from checkpoint | High (optimizer sharding) |
 
 ---
 
