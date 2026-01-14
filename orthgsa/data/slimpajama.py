@@ -16,6 +16,27 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+# Register zstd compression with fsspec (required for SlimPajama dataset)
+def _register_zstd_compression():
+    """Register zstd compression codec with fsspec if available."""
+    try:
+        import zstandard
+        import fsspec.compression
+
+        if 'zstd' not in fsspec.compression.compr:
+            def zstd_open(f, mode='rb', **kwargs):
+                if 'r' in mode:
+                    return zstandard.ZstdDecompressor().stream_reader(f)
+                else:
+                    return zstandard.ZstdCompressor().stream_writer(f)
+
+            fsspec.compression.register_compression('zstd', zstd_open, 'zstd')
+            logger.debug("Registered zstd compression with fsspec")
+    except ImportError:
+        logger.warning("zstandard not installed, zstd compressed datasets may not load")
+
+_register_zstd_compression()
+
 
 @dataclass
 class DataCollatorForLanguageModeling:

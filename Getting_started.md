@@ -548,6 +548,36 @@ uv pip install deepspeed>=0.14.0
 pip install deepspeed --no-build-isolation
 ```
 
+### Issue: "Compression type zstd not supported" error
+
+The SlimPajama dataset uses zstd compression. If you see this error:
+
+```
+ValueError: Compression type zstd not supported
+```
+
+**Solution**: Install the `zstandard` package:
+
+```bash
+pip install zstandard>=0.22.0
+```
+
+The `zstandard` package is listed in `requirements.txt` and `pyproject.toml`, but if you installed dependencies manually, you may have missed it. The data loading code automatically registers zstd with fsspec when loaded.
+
+If the error persists after installing `zstandard`, ensure you're using the correct Python environment:
+
+```bash
+# Verify zstandard is installed in your active environment
+python -c "import zstandard; print('zstandard version:', zstandard.__version__)"
+
+# Verify zstd is registered with fsspec
+python -c "
+import fsspec.compression
+from orthgsa.data.slimpajama import _register_zstd_compression
+print('zstd registered:', 'zstd' in fsspec.compression.compr)
+"
+```
+
 ---
 
 ## Quick Reference
