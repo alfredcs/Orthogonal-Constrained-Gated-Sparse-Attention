@@ -36,8 +36,81 @@ def _parse_s3_path(s3_path: str) -> tuple:
 def _get_s3_client():
     """Get boto3 S3 client using default credentials."""
     import boto3
+    from botocore.config import Config
+
+    # Configure retries at the client level
+    config = Config(
+        retries={
+            'max_attempts': 5,
+            'mode': 'adaptive'
+        },
+        connect_timeout=30,
+        read_timeout=60,
+    )
     session = boto3.Session(profile_name="default")
-    return session.client("s3")
+    return session.client("s3", config=config)
+
+
+# Global cache directory for S3 files
+_S3_CACHE_DIR = os.environ.get("S3_CACHE_DIR", "/tmp/s3_cache")
+
+
+def _get_cached_file_path(bucket: str, key: str) -> str:
+    """Get local cache path for an S3 file."""
+    cache_path = os.path.join(_S3_CACHE_DIR, bucket, key)
+    return cache_path
+
+
+def _download_s3_file_with_retry(bucket: str, key: str, max_retries: int = 3) -> bytes:
+    """
+    Download S3 file with retry logic and optional local caching.
+
+    Args:
+        bucket: S3 bucket name
+        key: S3 object key
+        max_retries: Maximum number of retry attempts
+
+    Returns:
+        File contents as bytes
+    """
+    import time
+
+    # Check if caching is enabled and file exists locally
+    use_cache = os.environ.get("S3_USE_CACHE", "false").lower() == "true"
+    cache_path = _get_cached_file_path(bucket, key)
+
+    if use_cache and os.path.exists(cache_path):
+        logger.debug(f"Using cached file: {cache_path}")
+        with open(cache_path, "rb") as f:
+            return f.read()
+
+    s3 = _get_s3_client()
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            response = s3.get_object(Bucket=bucket, Key=key)
+            data = response["Body"].read()
+
+            # Cache the file if caching is enabled
+            if use_cache:
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, "wb") as f:
+                    f.write(data)
+                logger.debug(f"Cached file: {cache_path}")
+
+            return data
+
+        except Exception as e:
+            last_error = e
+            wait_time = (2 ** attempt) + (0.1 * attempt)  # Exponential backoff
+            logger.warning(
+                f"Error downloading {key} (attempt {attempt + 1}/{max_retries}): {e}. "
+                f"Retrying in {wait_time:.1f}s..."
+            )
+            time.sleep(wait_time)
+
+    raise last_error
 
 
 def _list_s3_files(bucket: str, prefix: str, extensions: List[str]) -> List[str]:
@@ -58,23 +131,62 @@ def _list_s3_files(bucket: str, prefix: str, extensions: List[str]) -> List[str]
     return sorted(files)
 
 
-def _stream_s3_jsonl_zst(bucket: str, key: str) -> Generator[Dict, None, None]:
-    """Stream and decompress a .jsonl.zst file from S3."""
+def _stream_s3_jsonl_zst(bucket: str, key: str, max_retries: int = 3) -> Generator[Dict, None, None]:
+    """Stream and decompress a .jsonl.zst file from S3 with retry logic."""
     import zstandard as zstd
 
-    s3 = _get_s3_client()
-
-    # Get the object
-    response = s3.get_object(Bucket=bucket, Key=key)
-    body = response["Body"]
+    # Download entire file with retry logic (more reliable than streaming for unstable connections)
+    data = _download_s3_file_with_retry(bucket, key, max_retries=max_retries)
 
     # Create zstd decompressor
     dctx = zstd.ZstdDecompressor()
 
-    # Stream decompress and parse JSONL
-    with dctx.stream_reader(body) as reader:
-        text_stream = io.TextIOWrapper(reader, encoding="utf-8")
-        for line in text_stream:
+    # Decompress and parse JSONL
+    decompressed = dctx.decompress(data)
+    for line in decompressed.decode("utf-8").split("\n"):
+        line = line.strip()
+        if line:
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def _stream_s3_jsonl(bucket: str, key: str, max_retries: int = 3) -> Generator[Dict, None, None]:
+    """Stream a .jsonl file from S3 with retry logic."""
+    # Download entire file with retry logic
+    data = _download_s3_file_with_retry(bucket, key, max_retries=max_retries)
+
+    for line in data.decode("utf-8").split("\n"):
+        line = line.strip()
+        if line:
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def _stream_s3_json_zst(bucket: str, key: str, max_retries: int = 3) -> Generator[Dict, None, None]:
+    """Stream and decompress a .json.zst file from S3 with retry logic."""
+    import zstandard as zstd
+
+    # Download entire file with retry logic
+    data = _download_s3_file_with_retry(bucket, key, max_retries=max_retries)
+
+    dctx = zstd.ZstdDecompressor()
+    decompressed = dctx.decompress(data)
+
+    try:
+        # Try as JSON array
+        items = json.loads(decompressed)
+        if isinstance(items, list):
+            for item in items:
+                yield item
+        else:
+            yield items
+    except json.JSONDecodeError:
+        # Try as JSONL
+        for line in decompressed.decode("utf-8").split("\n"):
             line = line.strip()
             if line:
                 try:
@@ -83,58 +195,15 @@ def _stream_s3_jsonl_zst(bucket: str, key: str) -> Generator[Dict, None, None]:
                     continue
 
 
-def _stream_s3_jsonl(bucket: str, key: str) -> Generator[Dict, None, None]:
-    """Stream a .jsonl file from S3."""
-    s3 = _get_s3_client()
-
-    response = s3.get_object(Bucket=bucket, Key=key)
-    body = response["Body"]
-
-    for line in body.iter_lines():
-        line = line.decode("utf-8").strip()
-        if line:
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-
-def _stream_s3_json_zst(bucket: str, key: str) -> Generator[Dict, None, None]:
-    """Stream and decompress a .json.zst file from S3."""
-    import zstandard as zstd
-
-    s3 = _get_s3_client()
-
-    response = s3.get_object(Bucket=bucket, Key=key)
-    body = response["Body"]
-
-    dctx = zstd.ZstdDecompressor()
-
-    with dctx.stream_reader(body) as reader:
-        data = reader.read()
-        try:
-            # Try as JSON array
-            items = json.loads(data)
-            if isinstance(items, list):
-                for item in items:
-                    yield item
-            else:
-                yield items
-        except json.JSONDecodeError:
-            # Try as JSONL
-            for line in data.decode("utf-8").split("\n"):
-                line = line.strip()
-                if line:
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-
 class S3StreamingDataset(IterableDataset):
     """
     Custom streaming dataset that reads directly from S3 using boto3.
     Avoids s3fs/aiobotocore compatibility issues.
+
+    Features:
+    - Retry logic with exponential backoff for connection errors
+    - Optional local caching (set S3_USE_CACHE=true and S3_CACHE_DIR=/path/to/cache)
+    - Automatic sharding across DataLoader workers
     """
 
     def __init__(
@@ -143,11 +212,13 @@ class S3StreamingDataset(IterableDataset):
         split: str = "train",
         seed: int = 42,
         shuffle_files: bool = True,
+        max_retries: int = 3,
     ):
         self.s3_path = s3_path
         self.split = split
         self.seed = seed
         self.shuffle_files = shuffle_files
+        self.max_retries = max_retries
 
         # Parse S3 path
         self.bucket, self.prefix = _parse_s3_path(s3_path)
@@ -172,14 +243,20 @@ class S3StreamingDataset(IterableDataset):
 
         logger.info(f"Found {len(self.files)} files in s3://{self.bucket}/{self.prefix}")
 
+        # Log cache status
+        use_cache = os.environ.get("S3_USE_CACHE", "false").lower() == "true"
+        if use_cache:
+            cache_dir = os.environ.get("S3_CACHE_DIR", "/tmp/s3_cache")
+            logger.info(f"S3 caching enabled: {cache_dir}")
+
     def _get_file_streamer(self, key: str):
         """Get appropriate streamer based on file extension."""
         if key.endswith(".jsonl.zst"):
-            return _stream_s3_jsonl_zst(self.bucket, key)
+            return _stream_s3_jsonl_zst(self.bucket, key, max_retries=self.max_retries)
         elif key.endswith(".json.zst"):
-            return _stream_s3_json_zst(self.bucket, key)
+            return _stream_s3_json_zst(self.bucket, key, max_retries=self.max_retries)
         elif key.endswith(".jsonl"):
-            return _stream_s3_jsonl(self.bucket, key)
+            return _stream_s3_jsonl(self.bucket, key, max_retries=self.max_retries)
         else:
             raise ValueError(f"Unsupported file format: {key}")
 
@@ -200,14 +277,21 @@ class S3StreamingDataset(IterableDataset):
             num_workers = worker_info.num_workers
             files = files[worker_id::num_workers]
 
+        # Track failed files for logging
+        failed_files = []
+
         # Stream from each file
         for key in files:
             try:
                 for example in self._get_file_streamer(key):
                     yield example
             except Exception as e:
-                logger.warning(f"Error reading {key}: {e}")
+                failed_files.append(key)
+                logger.warning(f"Failed to read {key} after {self.max_retries} retries: {e}")
                 continue
+
+        if failed_files:
+            logger.warning(f"Total files failed: {len(failed_files)}/{len(files)}")
 
 
 def _load_dataset_from_s3(
@@ -215,6 +299,7 @@ def _load_dataset_from_s3(
     split: str = "train",
     streaming: bool = True,
     seed: int = 42,
+    max_retries: int = 3,
 ) -> S3StreamingDataset:
     """
     Load dataset directly from S3 bucket using boto3.
@@ -224,12 +309,17 @@ def _load_dataset_from_s3(
         split: Dataset split to load
         streaming: Whether to stream the dataset (always True for S3)
         seed: Random seed for file shuffling
+        max_retries: Maximum retry attempts for failed downloads
 
     Returns:
         S3StreamingDataset
+
+    Environment Variables:
+        S3_USE_CACHE: Set to "true" to enable local file caching
+        S3_CACHE_DIR: Directory for cached files (default: /tmp/s3_cache)
     """
-    logger.info(f"Loading dataset from S3: {s3_path} (split={split})")
-    return S3StreamingDataset(s3_path, split=split, seed=seed)
+    logger.info(f"Loading dataset from S3: {s3_path} (split={split}, max_retries={max_retries})")
+    return S3StreamingDataset(s3_path, split=split, seed=seed, max_retries=max_retries)
 
 
 @dataclass
