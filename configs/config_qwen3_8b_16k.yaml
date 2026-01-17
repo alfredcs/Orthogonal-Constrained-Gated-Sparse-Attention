@@ -1,0 +1,116 @@
+# OrthGSA Training Configuration for Qwen3-8B on SlimPajama-627B
+# Target: 4x 44GB GPUs, 16K context window
+# Memory estimate: ~35-40GB per GPU with DeepSpeed ZeRO-3 + CPU offload
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+
+  # OrthGSA-specific parameters (using Cayley Transform for orthogonal constraints)
+  orthgsa:
+    n_streams: 2                    # Reduced for memory (8B + 16K context)
+    alpha_init: 0.01                # Initial scaling for orthogonal HC coefficients
+    cayley_scaling: 0.1             # Scaling for Cayley transform input
+
+  # GSA parameters - tuned for 16K context
+  gsa:
+    enabled: true
+    k_base: 512                     # Base for 16K context
+    k_min: 128                      # Minimum k
+    k_max: 1024                     # Maximum k
+    indexer_heads: 4                # Indexer heads
+    indexer_dim: 64                 # Indexer dimension
+    adaptive_k: true                # Enable adaptive k selection
+    gate_bias_init: 0.5             # Initial gate bias
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  local_path: "~/datasets/SlimPajama-627B"
+  max_seq_length: 16384             # 16K context window
+  num_workers: 2                    # DataLoader workers per GPU
+  streaming: true                   # Use streaming for large dataset
+
+# Training Configuration
+training:
+  # Batch sizes optimized for 4x44GB GPUs with 16K context
+  per_device_train_batch_size: 1    # Per GPU batch size
+  per_device_eval_batch_size: 1     # Same for eval
+  gradient_accumulation_steps: 16   # Effective batch = 4*1*16 = 64
+
+  # Learning rate
+  learning_rate: 1.5e-5             # Peak learning rate
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03                # 3% warmup
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  # Training duration
+  max_steps: 2000                   # Total training steps
+  eval_steps: 250                   # Evaluate every N steps
+  save_steps: 500                   # Save checkpoint every N steps
+  logging_steps: 10                 # Log every N steps
+
+  # Precision and optimization
+  bf16: true                        # Use BF16 mixed precision
+  tf32: true                        # Enable TF32 on Ampere+
+  gradient_checkpointing: true      # Critical for memory
+
+  # Optimizer
+  optim: "adamw_torch_fused"        # Fused AdamW
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration
+distributed:
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero3_16k.json"
+
+  fsdp_config:
+    sharding_strategy: "FULL_SHARD"
+    cpu_offload: true
+    backward_prefetch: "BACKWARD_PRE"
+    state_dict_type: "FULL_STATE_DICT"
+    limit_all_gathers: true
+    forward_prefetch: true
+    sync_module_states: true
+    use_orig_params: true
+
+# Memory Optimization
+memory:
+  target_memory_utilization: 0.90
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+  use_flash_attention: true
+  auto_find_batch_size: false
+
+# Logging Configuration
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-8b"
+    entity: null
+    run_name: "qwen3-8b-16k-ctx"
+    tags: ["orthgsa", "qwen3-8b", "slimpajama", "16k-context", "cayley-transform", "zero3"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-8b-16k"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 3
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation
+evaluation:
+  do_eval: true
+  eval_strategy: "steps"
+  per_device_eval_batch_size: 1
+  eval_accumulation_steps: 4
+
+# Seed for reproducibility
+seed: 42

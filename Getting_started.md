@@ -22,7 +22,7 @@ This guide provides step-by-step instructions for setting up the environment usi
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
 | GPUs | 1x 24GB | 4x 40-48GB (A100/H100/L40S/A6000) |
-| RAM | 64GB | 128GB |
+| RAM | 64GB | 128GB+ (256GB for 128K context with CPU offload) |
 | Storage | 500GB SSD | 2TB NVMe SSD |
 | CPU | 8 cores | 16+ cores |
 
@@ -31,6 +31,15 @@ This guide provides step-by-step instructions for setting up the environment usi
 - **L40S** (48GB): Excellent for training, good cost-efficiency
 - **A6000/RTX 4090** (48GB/24GB): Good for smaller runs or inference
 - **RTX 3090/4090** (24GB): Requires DeepSpeed ZeRO-2/3
+
+**Model-Specific Requirements**:
+
+| Model | Context | GPUs | Memory/GPU | DeepSpeed Stage |
+|-------|---------|------|------------|-----------------|
+| Qwen3-4B-Instruct | 1K | 4x | 17-22GB | ZeRO-2 |
+| Qwen3-8B | 32K | 4x | 30-35GB | ZeRO-2 |
+| Qwen3-8B | 64K | 4x | 35-40GB | ZeRO-2 |
+| Qwen3-8B | 128K | 4x | 40-44GB | ZeRO-3 + CPU offload |
 
 ### Software Requirements
 
@@ -232,7 +241,9 @@ The training script automatically uses the local path if the directory exists an
 
 ### Step 4.3: Download Base Model (Optional)
 
-Pre-download the Qwen3-4B model:
+Pre-download the base model. Choose based on your training configuration:
+
+**Option A: Qwen3-4B-Instruct** (for smaller context training):
 
 ```bash
 python -c "
@@ -253,11 +264,58 @@ print(f'Model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}
 "
 ```
 
+**Option B: Qwen3-8B** (for long context 32K/64K/128K training):
+
+Download the model to `/home/alfred/models/Qwen3-8B`:
+
+```bash
+# Using huggingface-cli (recommended)
+huggingface-cli download Qwen/Qwen3-8B --local-dir /home/alfred/models/Qwen3-8B
+
+# Or using Python
+python -c "
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from pathlib import Path
+
+model_name = 'Qwen/Qwen3-8B'
+save_path = Path.home() / 'models' / 'Qwen3-8B'
+save_path.mkdir(parents=True, exist_ok=True)
+
+print(f'Downloading {model_name} to {save_path}...')
+
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+tokenizer.save_pretrained(save_path)
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    trust_remote_code=True,
+    torch_dtype='auto',
+)
+model.save_pretrained(save_path)
+
+print('Model downloaded successfully!')
+print(f'Model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}B')
+"
+```
+
+> **Note**: Qwen3-8B is an 8B parameter text model. The long context configs use a local path (`/home/alfred/models/Qwen3-8B`) for faster loading.
+
 ---
 
 ## 5. Configuration
 
-### Step 5.1: Review Default Configuration
+### Step 5.1: Available Configuration Files
+
+OrthGSA provides pre-configured files for different models and context windows:
+
+| Config File | Model | Context | GPUs | Use Case |
+|-------------|-------|---------|------|----------|
+| `config_qwen3_4b.yaml` | Qwen3-4B-Instruct | 1K | 4x 24-48GB | Default, smaller experiments |
+| `config_qwen3_8b_32k.yaml` | Qwen3-8B | 32K | 4x 44GB | Long context training |
+| `config_qwen3_8b_64k.yaml` | Qwen3-8B | 64K | 4x 44GB | Extended context training |
+| `config_qwen3_8b_128k.yaml` | Qwen3-8B | 128K | 4x 44GB | Maximum context training |
+
+### Step 5.2: Qwen3-4B Configuration (Default)
 
 The default configuration is at `configs/config_qwen3_4b.yaml`:
 
@@ -282,7 +340,100 @@ training:
   bf16: true
 ```
 
-### Step 5.2: Configuration for Different GPU Setups
+### Step 5.3: Qwen3-8B Long Context Configurations
+
+For Qwen3-8B with long context windows on **4x 44GB GPUs**:
+
+**32K Context** (`configs/config_qwen3_8b_32k.yaml`):
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+  orthgsa:
+    n_streams: 4          # Full streams (more memory headroom)
+  gsa:
+    k_base: 1024          # Higher for longer context
+    k_max: 2048
+    indexer_heads: 8
+
+data:
+  max_seq_length: 32768   # 32K context
+
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 32   # Effective batch = 128
+  learning_rate: 1.5e-5             # Reduced for 8B model
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero2_32k.json"
+```
+
+**64K Context** (`configs/config_qwen3_8b_64k.yaml`):
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+  orthgsa:
+    n_streams: 3          # Reduced for memory
+  gsa:
+    k_base: 768           # Moderate for 64K
+    k_max: 1536
+    indexer_heads: 6
+
+data:
+  max_seq_length: 65536   # 64K context
+
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 24   # Effective batch = 96
+  learning_rate: 1.2e-5             # Further reduced
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero2_64k.json"
+```
+
+**128K Context** (`configs/config_qwen3_8b_128k.yaml`):
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+  orthgsa:
+    n_streams: 2          # Minimum for memory constraints
+  gsa:
+    k_base: 512           # Conservative for 128K
+    k_max: 1024
+    indexer_heads: 4
+
+data:
+  max_seq_length: 131072  # 128K context
+
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16   # Effective batch = 64
+  learning_rate: 1.0e-5             # Lower for stability
+  warmup_ratio: 0.05                # Longer warmup
+  max_grad_norm: 0.5                # Tighter clipping
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero3_128k.json"  # ZeRO-3 with CPU offload
+```
+
+> **Note**: 128K context requires DeepSpeed ZeRO-3 with CPU offloading. Ensure you have sufficient system RAM (256GB+ recommended).
+
+### Step 5.4: Launch Commands for Each Configuration
+
+```bash
+# Qwen3-4B (default)
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
+
+# Qwen3-8B with 32K context
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_32k.yaml
+
+# Qwen3-8B with 64K context
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_64k.yaml
+
+# Qwen3-8B with 128K context (requires ZeRO-3)
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
+```
+
+### Step 5.5: Configuration for Different GPU Setups (Qwen3-4B)
 
 **Single GPU (24GB)**:
 ```yaml
@@ -315,6 +466,15 @@ training:
 data:
   max_seq_length: 4096
 ```
+
+### Step 5.6: Parameter Summary Table
+
+| Config | n_streams | k_base | LR | Batch | Grad Accum | Eff. Batch | DeepSpeed |
+|--------|-----------|--------|-----|-------|------------|------------|-----------|
+| Qwen3-4B (1K) | 2-4 | 512 | 2.0e-5 | 1 | 32 | 128 | ZeRO-2 |
+| Qwen3-8B (32K) | 4 | 1024 | 1.5e-5 | 1 | 32 | 128 | ZeRO-2 |
+| Qwen3-8B (64K) | 3 | 768 | 1.2e-5 | 1 | 24 | 96 | ZeRO-2 |
+| Qwen3-8B (128K) | 2 | 512 | 1.0e-5 | 1 | 16 | 64 | ZeRO-3 |
 
 ---
 
@@ -647,18 +807,35 @@ print('zstd registered:', 'zstd' in fsspec.compression.compr)
 # Activate environment
 source .venv/bin/activate
 
-# Start training (DeepSpeed - recommended)
+# ============================================
+# Qwen3-4B Training (default, 1K context)
+# ============================================
 deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
 
 # Or use launch script
 ./scripts/launch_train.sh
 
-# Resume training from latest checkpoint
+# ============================================
+# Qwen3-8B Long Context Training (4x 44GB GPUs)
+# ============================================
+# 32K context
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_32k.yaml
+
+# 64K context
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_64k.yaml
+
+# 128K context (uses ZeRO-3 with CPU offload)
+deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
+
+# ============================================
+# Resume Training
+# ============================================
+# Resume Qwen3-4B from latest checkpoint
 deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml
 
-# Resume from specific checkpoint
-deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml \
-    --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-5000
+# Resume Qwen3-8B 32K from specific checkpoint
+deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_8b_32k.yaml \
+    --checkpoint outputs/orthgsa-qwen3-8b-32k/checkpoint-5000
 
 # Single GPU training
 python scripts/train.py --config configs/config_qwen3_4b.yaml
@@ -685,8 +862,14 @@ watch -n 1 nvidia-smi
 OrthGSA/
 ├── .venv/                   # uv virtual environment
 ├── configs/
-│   ├── config_qwen3_4b.yaml # Main training configuration
-│   └── deepspeed_zero2.json # DeepSpeed ZeRO-2 config (optional)
+│   ├── config_qwen3_4b.yaml          # Qwen3-4B config (default)
+│   ├── config_qwen3_8b_32k.yaml      # Qwen3-8B 32K context config
+│   ├── config_qwen3_8b_64k.yaml      # Qwen3-8B 64K context config
+│   ├── config_qwen3_8b_128k.yaml     # Qwen3-8B 128K context config
+│   ├── deepspeed_zero2.json          # DeepSpeed ZeRO-2 config (default)
+│   ├── deepspeed_zero2_32k.json      # DeepSpeed ZeRO-2 for 32K context
+│   ├── deepspeed_zero2_64k.json      # DeepSpeed ZeRO-2 for 64K context
+│   └── deepspeed_zero3_128k.json     # DeepSpeed ZeRO-3 for 128K context
 ├── orthgsa/                 # Source code
 ├── outputs/                 # Training outputs
 ├── scripts/

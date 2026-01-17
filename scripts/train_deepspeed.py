@@ -177,12 +177,17 @@ def main():
     )
 
     # Create model
+    # Note: For ZeRO-3 with pretrained models, we load normally with low_cpu_mem_usage=True
+    # and let deepspeed.initialize() handle the weight sharding.
+    # deepspeed.zero.Init() is only for randomly initialized models, not from_pretrained().
     logger.info(f"Loading model: {model_config['base_model']}")
 
     model = OrthGSAForCausalLM(
         base_model_name=model_config["base_model"],
         orthgsa_config=orthgsa_cfg,
         torch_dtype=torch.bfloat16 if config["training"]["bf16"] else torch.float32,
+        device_map=None,  # Let DeepSpeed handle device placement
+        low_cpu_mem_usage=True,  # Reduce peak memory during loading for ZeRO-3
     )
 
     # Log parameter counts
@@ -232,48 +237,94 @@ def main():
             local_path=local_path,
         )
 
-    # DeepSpeed config
-    ds_config = {
-        "train_batch_size": training_config["per_device_train_batch_size"] * world_size * training_config["gradient_accumulation_steps"],
-        "train_micro_batch_size_per_gpu": training_config["per_device_train_batch_size"],
-        "gradient_accumulation_steps": training_config["gradient_accumulation_steps"],
-        "gradient_clipping": training_config["max_grad_norm"],
-        "bf16": {
-            "enabled": training_config.get("bf16", True),
-        },
-        "optimizer": {
-            "type": "AdamW",
-            "params": {
-                "lr": training_config["learning_rate"],
-                "betas": [training_config["adam_beta1"], training_config["adam_beta2"]],
-                "eps": training_config["adam_epsilon"],
-                "weight_decay": training_config["weight_decay"],
+    # DeepSpeed config - load from external file if specified, otherwise use defaults
+    distributed_config = config.get("distributed", {})
+    ds_config_path = distributed_config.get("deepspeed_config")
+
+    # Resolve relative path from project root
+    if ds_config_path and not os.path.isabs(ds_config_path):
+        project_root = Path(__file__).parent.parent
+        ds_config_path = str(project_root / ds_config_path)
+
+    if ds_config_path and os.path.exists(ds_config_path):
+        # Load external DeepSpeed config
+        logger.info(f"Loading DeepSpeed config from: {ds_config_path}")
+        import json
+        with open(ds_config_path, "r") as f:
+            ds_config = json.load(f)
+
+        # Override batch sizes with values from training config
+        ds_config["train_batch_size"] = training_config["per_device_train_batch_size"] * world_size * training_config["gradient_accumulation_steps"]
+        ds_config["train_micro_batch_size_per_gpu"] = training_config["per_device_train_batch_size"]
+        ds_config["gradient_accumulation_steps"] = training_config["gradient_accumulation_steps"]
+
+        # Add optimizer if not present
+        if "optimizer" not in ds_config:
+            ds_config["optimizer"] = {
+                "type": "AdamW",
+                "params": {
+                    "lr": training_config["learning_rate"],
+                    "betas": [training_config["adam_beta1"], training_config["adam_beta2"]],
+                    "eps": training_config["adam_epsilon"],
+                    "weight_decay": training_config["weight_decay"],
+                },
+            }
+
+        # Add scheduler if not present
+        if "scheduler" not in ds_config:
+            ds_config["scheduler"] = {
+                "type": "WarmupDecayLR",
+                "params": {
+                    "warmup_min_lr": 1e-6,
+                    "warmup_max_lr": training_config["learning_rate"],
+                    "warmup_num_steps": int(training_config["max_steps"] * training_config["warmup_ratio"]),
+                    "total_num_steps": training_config["max_steps"],
+                },
+            }
+    else:
+        # Use default ZeRO-2 config
+        logger.info("Using default DeepSpeed ZeRO-2 config")
+        ds_config = {
+            "train_batch_size": training_config["per_device_train_batch_size"] * world_size * training_config["gradient_accumulation_steps"],
+            "train_micro_batch_size_per_gpu": training_config["per_device_train_batch_size"],
+            "gradient_accumulation_steps": training_config["gradient_accumulation_steps"],
+            "gradient_clipping": training_config["max_grad_norm"],
+            "bf16": {
+                "enabled": training_config.get("bf16", True),
             },
-        },
-        "scheduler": {
-            "type": "WarmupDecayLR",
-            "params": {
-                "warmup_min_lr": 1e-6,  # Start with small non-zero LR for actual training
-                "warmup_max_lr": training_config["learning_rate"],
-                "warmup_num_steps": int(training_config["max_steps"] * training_config["warmup_ratio"]),
-                "total_num_steps": training_config["max_steps"],
+            "optimizer": {
+                "type": "AdamW",
+                "params": {
+                    "lr": training_config["learning_rate"],
+                    "betas": [training_config["adam_beta1"], training_config["adam_beta2"]],
+                    "eps": training_config["adam_epsilon"],
+                    "weight_decay": training_config["weight_decay"],
+                },
             },
-        },
-        "zero_optimization": {
-            "stage": 2,
-            "offload_optimizer": {
-                "device": "none",
+            "scheduler": {
+                "type": "WarmupDecayLR",
+                "params": {
+                    "warmup_min_lr": 1e-6,
+                    "warmup_max_lr": training_config["learning_rate"],
+                    "warmup_num_steps": int(training_config["max_steps"] * training_config["warmup_ratio"]),
+                    "total_num_steps": training_config["max_steps"],
+                },
             },
-            "allgather_partitions": True,
-            "allgather_bucket_size": 2e8,
-            "overlap_comm": True,
-            "reduce_scatter": True,
-            "reduce_bucket_size": 2e8,
-            "contiguous_gradients": True,
-        },
-        "steps_per_print": training_config["logging_steps"],
-        "wall_clock_breakdown": False,
-    }
+            "zero_optimization": {
+                "stage": 2,
+                "offload_optimizer": {
+                    "device": "none",
+                },
+                "allgather_partitions": True,
+                "allgather_bucket_size": 2e8,
+                "overlap_comm": True,
+                "reduce_scatter": True,
+                "reduce_bucket_size": 2e8,
+                "contiguous_gradients": True,
+            },
+            "steps_per_print": training_config["logging_steps"],
+            "wall_clock_breakdown": False,
+        }
 
     # Initialize DeepSpeed
     model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(

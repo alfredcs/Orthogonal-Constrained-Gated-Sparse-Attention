@@ -1,0 +1,125 @@
+# OrthGSA Training Configuration for Qwen3-8B on SlimPajama-627B
+# Target: 4x 44GB GPUs, 128K context window
+# Memory estimate: ~40-44GB per GPU with DeepSpeed ZeRO-3 + CPU offload
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+
+  # OrthGSA-specific parameters (using Cayley Transform for orthogonal constraints)
+  orthgsa:
+    n_streams: 2                    # Minimum streams for 128K context memory
+    alpha_init: 0.01                # Initial scaling for orthogonal HC coefficients
+    cayley_scaling: 0.1             # Scaling for Cayley transform input
+
+  # GSA parameters - minimized for 128K context
+  gsa:
+    enabled: true
+    k_base: 512                     # Conservative base for 128K context
+    k_min: 128                      # Minimum k
+    k_max: 1024                     # Maximum k for 128K context
+    indexer_heads: 4                # Reduced indexer heads for memory
+    indexer_dim: 64                 # Smaller indexer dimension
+    adaptive_k: true                # Enable adaptive k selection
+    gate_bias_init: 0.5             # Initial gate bias
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  local_path: "~/datasets/SlimPajama-627B"
+  max_seq_length: 131072            # 128K context window
+  num_workers: 2                    # Reduced workers to save memory
+  streaming: true                   # Use streaming for large dataset
+
+# Training Configuration
+training:
+  # Batch sizes minimized for 4x44GB GPUs with 128K context
+  per_device_train_batch_size: 1    # Per GPU batch size (must be 1)
+  per_device_eval_batch_size: 1     # Same for eval
+  gradient_accumulation_steps: 16   # Reduced for memory, effective batch = 4*1*16 = 64
+
+  # Learning rate (reduced for very long context training stability)
+  learning_rate: 1.0e-5             # Peak learning rate
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05                # Longer warmup for stability with 128K
+  weight_decay: 0.1
+  max_grad_norm: 0.5                # Tighter gradient clipping for stability
+
+  # Training duration
+  max_steps: 2000                   # Total training steps
+  eval_steps: 250                   # Evaluate every N steps
+  save_steps: 500                   # Save checkpoint every N steps
+  logging_steps: 10                 # Log every N steps
+
+  # Precision and optimization
+  bf16: true                        # Use BF16 mixed precision
+  tf32: true                        # Enable TF32 on Ampere+
+  gradient_checkpointing: true      # Critical for 128K context memory
+
+  # Optimizer
+  optim: "adamw_torch_fused"        # Fused AdamW
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration
+# IMPORTANT: 128K context requires ZeRO-3 with CPU offloading
+distributed:
+  strategy: "deepspeed"             # DeepSpeed for multi-GPU
+  deepspeed_config: "configs/deepspeed_zero3_128k.json"
+
+  # FSDP config (alternative - may also work with CPU offload)
+  fsdp_config:
+    sharding_strategy: "FULL_SHARD"
+    cpu_offload: true               # Enable CPU offload for 128K
+    backward_prefetch: "BACKWARD_PRE"
+    state_dict_type: "FULL_STATE_DICT"
+    limit_all_gathers: true
+    forward_prefetch: true
+    sync_module_states: true
+    use_orig_params: true
+
+# Memory Optimization
+memory:
+  # Target ~95% of 44GB = ~42GB per GPU (very tight)
+  target_memory_utilization: 0.95
+
+  # Activation checkpointing - essential for 128K context
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+
+  # Efficient attention - absolutely critical for 128K context
+  use_flash_attention: true
+
+  # Batch finding
+  auto_find_batch_size: false
+
+# Logging Configuration
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-8b"
+    entity: null
+    run_name: "qwen3-8b-128k-ctx"
+    tags: ["orthgsa", "qwen3-8b", "slimpajama", "128k-context", "cayley-transform", "zero3"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-8b-128k"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 2               # Keep fewer checkpoints due to size
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation
+evaluation:
+  do_eval: true
+  eval_strategy: "steps"
+  per_device_eval_batch_size: 1
+  eval_accumulation_steps: 4        # Reduced for memory
+
+# Seed for reproducibility
+seed: 42

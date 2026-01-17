@@ -156,6 +156,7 @@ class OrthGSAForCausalLM(nn.Module):
         orthgsa_config: Optional[OrthGSAConfig] = None,
         torch_dtype: torch.dtype = torch.bfloat16,
         device_map: Optional[str] = None,
+        low_cpu_mem_usage: bool = False,
     ):
         super().__init__()
 
@@ -169,6 +170,8 @@ class OrthGSAForCausalLM(nn.Module):
         self.config.orthgsa = self.orthgsa_config.to_dict()
 
         # Load base model
+        # For ZeRO-3, use low_cpu_mem_usage=True to reduce peak memory during loading
+        # DeepSpeed.initialize() will handle the weight sharding afterwards
         logger.info(f"Loading base model: {base_model_name}")
         self.base_model = AutoModelForCausalLM.from_pretrained(
             base_model_name,
@@ -176,6 +179,7 @@ class OrthGSAForCausalLM(nn.Module):
             torch_dtype=torch_dtype,
             device_map=device_map,
             trust_remote_code=True,
+            low_cpu_mem_usage=low_cpu_mem_usage,
         )
 
         # Get architecture components
@@ -541,6 +545,7 @@ def convert_to_orthgsa(
     orthgsa_config: Optional[OrthGSAConfig] = None,
     torch_dtype: torch.dtype = torch.bfloat16,
     device_map: Optional[str] = None,
+    low_cpu_mem_usage: bool = False,
 ) -> OrthGSAForCausalLM:
     """
     Convert a pretrained model to OrthGSA architecture.
@@ -550,6 +555,7 @@ def convert_to_orthgsa(
         orthgsa_config: OrthGSA configuration
         torch_dtype: Model dtype
         device_map: Device placement
+        low_cpu_mem_usage: Use accelerate for memory-efficient loading (useful for ZeRO-3)
 
     Returns:
         OrthGSAForCausalLM model
@@ -559,6 +565,7 @@ def convert_to_orthgsa(
         orthgsa_config=orthgsa_config,
         torch_dtype=torch_dtype,
         device_map=device_map,
+        low_cpu_mem_usage=low_cpu_mem_usage,
     )
 
 
