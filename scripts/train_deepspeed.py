@@ -392,14 +392,20 @@ def main():
 
         accumulated_loss += loss.item()
 
-        # Free memory immediately after each step
+        # Free memory after each micro-batch (but don't flush cache yet)
         del outputs, batch
-        torch.cuda.empty_cache()
 
         # Check if we've completed a full gradient accumulation cycle
         if model_engine.is_gradient_accumulation_boundary():
             global_step += 1
             progress_bar.update(1)
+
+            # Synchronized cache flush at gradient boundaries to prevent staggered flushes
+            # This ensures all ranks flush at the same time, which is more efficient
+            if global_step % 5 == 0:  # Flush every 5 steps to balance memory vs performance
+                if torch.distributed.is_initialized():
+                    torch.distributed.barrier()
+                torch.cuda.empty_cache()
 
             # Logging
             if global_step % logging_steps == 0:
