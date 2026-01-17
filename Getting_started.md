@@ -37,9 +37,13 @@ This guide provides step-by-step instructions for setting up the environment usi
 | Model | Context | GPUs | Memory/GPU | DeepSpeed Stage |
 |-------|---------|------|------------|-----------------|
 | Qwen3-4B-Instruct | 1K | 4x | 17-22GB | ZeRO-2 |
-| Qwen3-8B | 32K | 4x | 30-35GB | ZeRO-2 |
-| Qwen3-8B | 64K | 4x | 35-40GB | ZeRO-2 |
-| Qwen3-8B | 128K | 4x | 40-44GB | ZeRO-3 + CPU offload |
+| Qwen3-8B | 8K | 8x | 30-35GB | ZeRO-3 + CPU offload |
+| Qwen3-8B | 16K | 8x | 35-40GB | ZeRO-3 + CPU offload |
+| Qwen3-8B | 32K | 8x | 38-42GB | ZeRO-3 + CPU offload |
+| Qwen3-8B | 64K | 8x | 40-44GB | ZeRO-3 + CPU offload |
+| Qwen3-8B | 128K | 8x | 42-44GB | ZeRO-3 + CPU offload |
+
+> **Note**: The model automatically uses Flash Attention 2 when available, which significantly reduces memory usage for long context training.
 
 ### Software Requirements
 
@@ -206,21 +210,41 @@ By default, the dataset streams directly from S3 without downloading to local st
 - Avoids HuggingFace rate limits
 - Works out of the box with the default configuration
 
-**Requirements**: Install `s3fs` for S3 access:
+**Requirements**: Install `boto3` for S3 access:
 
 ```bash
-pip install s3fs
+pip install boto3 botocore zstandard
+```
+
+**AWS Credentials Setup**: Configure your AWS credentials for S3 access:
+
+```bash
+# Option 1: Using AWS CLI
+aws configure
+
+# Option 2: Manually create credentials file
+mkdir -p ~/.aws
+cat > ~/.aws/credentials << 'EOF'
+[default]
+aws_access_key_id = YOUR_ACCESS_KEY
+aws_secret_access_key = YOUR_SECRET_KEY
+EOF
 ```
 
 Verify S3 streaming access:
 
 ```bash
 python -c "
-import s3fs
-fs = s3fs.S3FileSystem(anon=True)
-files = fs.ls('public-datasets-multimodality/SlimPajama-627B/train')[:5]
+import boto3
+session = boto3.Session(profile_name='default')
+s3 = session.client('s3')
+response = s3.list_objects_v2(
+    Bucket='public-datasets-multimodality',
+    Prefix='SlimPajama-627B/train/',
+    MaxKeys=5
+)
 print('S3 bucket accessible!')
-print(f'Sample files: {files}')
+print(f'Sample files: {[obj[\"Key\"] for obj in response.get(\"Contents\", [])]}')
 "
 ```
 
@@ -355,9 +379,13 @@ OrthGSA provides pre-configured files for different models and context windows:
 | Config File | Model | Context | GPUs | Use Case |
 |-------------|-------|---------|------|----------|
 | `config_qwen3_4b.yaml` | Qwen3-4B-Instruct | 1K | 4x 24-48GB | Default, smaller experiments |
-| `config_qwen3_8b_32k.yaml` | Qwen3-8B | 32K | 4x 44GB | Long context training |
-| `config_qwen3_8b_64k.yaml` | Qwen3-8B | 64K | 4x 44GB | Extended context training |
-| `config_qwen3_8b_128k.yaml` | Qwen3-8B | 128K | 4x 44GB | Maximum context training |
+| `config_qwen3_8b_8k.yaml` | Qwen3-8B | 8K | 8x 44GB | Base long context (recommended start) |
+| `config_qwen3_8b_16k.yaml` | Qwen3-8B | 16K | 8x 44GB | Medium long context |
+| `config_qwen3_8b_32k.yaml` | Qwen3-8B | 32K | 8x 44GB | Long context training |
+| `config_qwen3_8b_64k.yaml` | Qwen3-8B | 64K | 8x 44GB | Extended context training |
+| `config_qwen3_8b_128k.yaml` | Qwen3-8B | 128K | 8x 44GB | Maximum context training |
+
+> **Note**: All Qwen3-8B configs use DeepSpeed ZeRO-3 with CPU offload and Flash Attention 2 for memory efficiency.
 
 ### Step 5.2: Qwen3-4B Configuration (Default)
 
@@ -386,52 +414,78 @@ training:
 
 ### Step 5.3: Qwen3-8B Long Context Configurations
 
-For Qwen3-8B with long context windows on **4x 44GB GPUs**:
+For Qwen3-8B with long context windows on **8x 44GB GPUs**:
+
+**8K Context** (`configs/config_qwen3_8b_8k.yaml`) - Recommended starting point:
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+  orthgsa:
+    n_streams: 2          # Memory-optimized
+  gsa:
+    k_base: 512
+    k_max: 1024
+    indexer_heads: 4
+
+data:
+  max_seq_length: 8192    # 8K context
+  num_workers: 2
+
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16   # Effective batch = 128
+  learning_rate: 1.5e-5
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero3_8k.json"  # ZeRO-3 with CPU offload
+```
+
+**16K Context** (`configs/config_qwen3_8b_16k.yaml`):
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+  orthgsa:
+    n_streams: 2          # Memory-optimized
+  gsa:
+    k_base: 512
+    k_max: 1024
+    indexer_heads: 4
+
+data:
+  max_seq_length: 16384   # 16K context
+  num_workers: 2
+
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16   # Effective batch = 128
+  learning_rate: 1.5e-5
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero3_16k.json"  # ZeRO-3 with CPU offload
+```
 
 **32K Context** (`configs/config_qwen3_8b_32k.yaml`):
 ```yaml
 model:
   base_model: "/home/alfred/models/Qwen3-8B"
   orthgsa:
-    n_streams: 4          # Full streams (more memory headroom)
+    n_streams: 2          # Memory-optimized for long context
   gsa:
-    k_base: 1024          # Higher for longer context
-    k_max: 2048
-    indexer_heads: 8
+    k_base: 512
+    k_max: 1024
+    indexer_heads: 4
 
 data:
   max_seq_length: 32768   # 32K context
+  num_workers: 2
 
 training:
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 32   # Effective batch = 128
-  learning_rate: 1.5e-5             # Reduced for 8B model
+  gradient_accumulation_steps: 16   # Effective batch = 128
+  learning_rate: 1.5e-5
 
 distributed:
-  deepspeed_config: "configs/deepspeed_zero2_32k.json"
-```
-
-**64K Context** (`configs/config_qwen3_8b_64k.yaml`):
-```yaml
-model:
-  base_model: "/home/alfred/models/Qwen3-8B"
-  orthgsa:
-    n_streams: 3          # Reduced for memory
-  gsa:
-    k_base: 768           # Moderate for 64K
-    k_max: 1536
-    indexer_heads: 6
-
-data:
-  max_seq_length: 65536   # 64K context
-
-training:
-  per_device_train_batch_size: 1
-  gradient_accumulation_steps: 24   # Effective batch = 96
-  learning_rate: 1.2e-5             # Further reduced
-
-distributed:
-  deepspeed_config: "configs/deepspeed_zero2_64k.json"
+  deepspeed_config: "configs/deepspeed_zero3_32k.json"  # ZeRO-3 with CPU offload
 ```
 
 **128K Context** (`configs/config_qwen3_8b_128k.yaml`):
@@ -450,7 +504,7 @@ data:
 
 training:
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 16   # Effective batch = 64
+  gradient_accumulation_steps: 16   # Effective batch = 128
   learning_rate: 1.0e-5             # Lower for stability
   warmup_ratio: 0.05                # Longer warmup
   max_grad_norm: 0.5                # Tighter clipping
@@ -459,23 +513,41 @@ distributed:
   deepspeed_config: "configs/deepspeed_zero3_128k.json"  # ZeRO-3 with CPU offload
 ```
 
-> **Note**: 128K context requires DeepSpeed ZeRO-3 with CPU offloading. Ensure you have sufficient system RAM (256GB+ recommended).
+> **Note**: All long context configs use DeepSpeed ZeRO-3 with CPU offloading. Ensure you have sufficient system RAM (256GB+ recommended for 128K context).
 
 ### Step 5.4: Launch Commands for Each Configuration
 
 ```bash
-# Qwen3-4B (default)
+# Qwen3-4B (default, 4x GPUs)
 deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
 
+# ============================================
+# Qwen3-8B Long Context Training (8x 44GB GPUs)
+# ============================================
+# Use PYTORCH_CUDA_ALLOC_CONF for memory optimization
+
+# Qwen3-8B with 8K context (recommended starting point)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_8k.yaml
+
+# Qwen3-8B with 16K context
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_16k.yaml
+
 # Qwen3-8B with 32K context
-deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_32k.yaml
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_32k.yaml
 
 # Qwen3-8B with 64K context
-deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_64k.yaml
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_64k.yaml
 
-# Qwen3-8B with 128K context (requires ZeRO-3)
-deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
+# Qwen3-8B with 128K context
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
 ```
+
+> **Important**: The `PYTORCH_CUDA_ALLOC_CONF` environment variable is essential for long context training. It enables expandable memory segments and aggressive garbage collection to reduce memory fragmentation.
 
 ### Step 5.5: Configuration for Different GPU Setups (Qwen3-4B)
 
@@ -516,9 +588,11 @@ data:
 | Config | n_streams | k_base | LR | Batch | Grad Accum | Eff. Batch | DeepSpeed |
 |--------|-----------|--------|-----|-------|------------|------------|-----------|
 | Qwen3-4B (1K) | 2-4 | 512 | 2.0e-5 | 1 | 32 | 128 | ZeRO-2 |
-| Qwen3-8B (32K) | 4 | 1024 | 1.5e-5 | 1 | 32 | 128 | ZeRO-2 |
-| Qwen3-8B (64K) | 3 | 768 | 1.2e-5 | 1 | 24 | 96 | ZeRO-2 |
-| Qwen3-8B (128K) | 2 | 512 | 1.0e-5 | 1 | 16 | 64 | ZeRO-3 |
+| Qwen3-8B (8K) | 2 | 512 | 1.5e-5 | 1 | 16 | 128 | ZeRO-3 |
+| Qwen3-8B (16K) | 2 | 512 | 1.5e-5 | 1 | 16 | 128 | ZeRO-3 |
+| Qwen3-8B (32K) | 2 | 512 | 1.5e-5 | 1 | 16 | 128 | ZeRO-3 |
+| Qwen3-8B (64K) | 2 | 512 | 1.5e-5 | 1 | 16 | 128 | ZeRO-3 |
+| Qwen3-8B (128K) | 2 | 512 | 1.0e-5 | 1 | 16 | 128 | ZeRO-3 |
 
 ---
 
@@ -818,21 +892,41 @@ If you encounter errors accessing the S3 dataset:
 botocore.exceptions.NoCredentialsError: Unable to locate credentials
 ```
 
-**Solution**: The S3 bucket is public and uses anonymous access. Ensure `s3fs` is installed:
+**Solution**: Configure AWS credentials. The S3 bucket requires authentication:
 
 ```bash
-pip install s3fs
+# Option 1: Using AWS CLI
+aws configure
+
+# Option 2: Manually create credentials file
+mkdir -p ~/.aws
+cat > ~/.aws/credentials << 'EOF'
+[default]
+aws_access_key_id = YOUR_ACCESS_KEY
+aws_secret_access_key = YOUR_SECRET_KEY
+EOF
 ```
 
-If the error persists, verify the bucket is accessible:
+Ensure `boto3` is installed:
+
+```bash
+pip install boto3 botocore zstandard
+```
+
+Verify the bucket is accessible:
 
 ```bash
 python -c "
-import s3fs
-fs = s3fs.S3FileSystem(anon=True)
+import boto3
+session = boto3.Session(profile_name='default')
+s3 = session.client('s3')
 print('Testing S3 access...')
-files = fs.ls('public-datasets-multimodality/SlimPajama-627B')
-print(f'Found {len(files)} items. S3 access working!')
+response = s3.list_objects_v2(
+    Bucket='public-datasets-multimodality',
+    Prefix='SlimPajama-627B/',
+    MaxKeys=5
+)
+print(f'Found {len(response.get(\"Contents\", []))} items. S3 access working!')
 "
 ```
 
@@ -906,16 +1000,29 @@ deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_
 ./scripts/launch_train.sh
 
 # ============================================
-# Qwen3-8B Long Context Training (4x 44GB GPUs)
+# Qwen3-8B Long Context Training (8x 44GB GPUs)
 # ============================================
+# IMPORTANT: Always use PYTORCH_CUDA_ALLOC_CONF for long context training
+
+# 8K context (recommended starting point)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_8k.yaml
+
+# 16K context
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_16k.yaml
+
 # 32K context
-deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_32k.yaml
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_32k.yaml
 
 # 64K context
-deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_64k.yaml
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_64k.yaml
 
 # 128K context (uses ZeRO-3 with CPU offload)
-deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
 
 # ============================================
 # Resume Training
@@ -923,8 +1030,13 @@ deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_
 # Resume Qwen3-4B from latest checkpoint
 deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml
 
+# Resume Qwen3-8B 8K from latest checkpoint
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/resume_deepspeed.py --config configs/config_qwen3_8b_8k.yaml
+
 # Resume Qwen3-8B 32K from specific checkpoint
-deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_8b_32k.yaml \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+deepspeed --num_gpus=8 scripts/resume_deepspeed.py --config configs/config_qwen3_8b_32k.yaml \
     --checkpoint outputs/orthgsa-qwen3-8b-32k/checkpoint-5000
 
 # Single GPU training
@@ -953,12 +1065,16 @@ OrthGSA/
 ├── .venv/                   # uv virtual environment
 ├── configs/
 │   ├── config_qwen3_4b.yaml          # Qwen3-4B config (default)
+│   ├── config_qwen3_8b_8k.yaml       # Qwen3-8B 8K context config (recommended start)
+│   ├── config_qwen3_8b_16k.yaml      # Qwen3-8B 16K context config
 │   ├── config_qwen3_8b_32k.yaml      # Qwen3-8B 32K context config
 │   ├── config_qwen3_8b_64k.yaml      # Qwen3-8B 64K context config
 │   ├── config_qwen3_8b_128k.yaml     # Qwen3-8B 128K context config
 │   ├── deepspeed_zero2.json          # DeepSpeed ZeRO-2 config (default)
-│   ├── deepspeed_zero2_32k.json      # DeepSpeed ZeRO-2 for 32K context
-│   ├── deepspeed_zero2_64k.json      # DeepSpeed ZeRO-2 for 64K context
+│   ├── deepspeed_zero3_8k.json       # DeepSpeed ZeRO-3 for 8K context
+│   ├── deepspeed_zero3_16k.json      # DeepSpeed ZeRO-3 for 16K context
+│   ├── deepspeed_zero3_32k.json      # DeepSpeed ZeRO-3 for 32K context
+│   ├── deepspeed_zero3_64k.json      # DeepSpeed ZeRO-3 for 64K context
 │   └── deepspeed_zero3_128k.json     # DeepSpeed ZeRO-3 for 128K context
 ├── orthgsa/                 # Source code
 ├── outputs/                 # Training outputs
