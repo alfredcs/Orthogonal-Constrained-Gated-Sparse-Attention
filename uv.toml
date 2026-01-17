@@ -1,0 +1,16 @@
+# UV Configuration for OrthGSA
+# https://docs.astral.sh/uv/reference/settings/
+
+[pip]
+# Upgrade strategy for resolving dependencies
+upgrade = true
+
+# Index URLs
+index-url = "https://pypi.org/simple"
+extra-index-url = ["https://download.pytorch.org/whl/cu121"]
+
+# Ensure S3 packages are compatible (using boto3 directly, not s3fs)
+constraint = [
+    "boto3>=1.28.0",
+    "botocore>=1.31.0",
+]

@@ -23,6 +23,10 @@ triton>=2.1.0  # For custom kernels
 sentencepiece>=0.1.99
 protobuf>=4.25.0
 
+# S3 storage (for streaming datasets from S3 using boto3)
+boto3>=1.28.0
+botocore>=1.31.0
+
 # Utilities
 numpy>=1.24.0
 scipy>=1.11.0

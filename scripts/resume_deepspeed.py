@@ -256,6 +256,7 @@ def main():
     data_config = config["data"]
     dataset_name = data_config.get("dataset", "cerebras/SlimPajama-627B")
     local_path = data_config.get("local_path")
+    dataset_path = data_config.get("dataset_path")  # S3 path or explicit dataset path
 
     train_dataloader = get_slimpajama_dataloader(
         tokenizer=tokenizer,
@@ -269,6 +270,7 @@ def main():
         packed=True,
         dataset_name=dataset_name,
         local_path=local_path,
+        dataset_path=dataset_path,
     )
 
     # Optional evaluation dataloader
@@ -286,6 +288,7 @@ def main():
             packed=True,
             dataset_name=dataset_name,
             local_path=local_path,
+            dataset_path=dataset_path,
         )
 
     # DeepSpeed config

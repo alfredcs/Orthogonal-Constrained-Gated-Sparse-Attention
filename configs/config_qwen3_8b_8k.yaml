@@ -1,5 +1,5 @@
 # OrthGSA Training Configuration for Qwen3-8B on SlimPajama-627B
-# Target: 4x 44GB GPUs, 8K context window
+# Target: 8x 44GB GPUs, 8K context window
 # Memory estimate: ~30-35GB per GPU with DeepSpeed ZeRO-3 + CPU offload
 
 # Model Configuration
@@ -24,19 +24,20 @@ model:
     gate_bias_init: 0.5             # Initial gate bias
 
 # Data Configuration
+# Supports S3 streaming, HuggingFace hub, and local datasets
 data:
-  dataset: "cerebras/SlimPajama-627B"
-  local_path: "~/datasets/SlimPajama-627B"
+  dataset: "cerebras/SlimPajama-627B"  # Fallback HuggingFace identifier
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"  # S3 path (streams directly, no download)
   max_seq_length: 8192              # 8K context window
-  num_workers: 2                    # DataLoader workers per GPU
+  num_workers: 2                    # DataLoader workers per process
   streaming: true                   # Use streaming for large dataset
 
 # Training Configuration
 training:
-  # Batch sizes optimized for 4x44GB GPUs with 8K context
+  # Batch sizes optimized for 8x44GB GPUs with 8K context
   per_device_train_batch_size: 1    # Per GPU batch size
   per_device_eval_batch_size: 1     # Same for eval
-  gradient_accumulation_steps: 16   # Effective batch = 4*1*16 = 64
+  gradient_accumulation_steps: 16   # Effective batch = 8*1*16 = 128
 
   # Learning rate
   learning_rate: 1.5e-5             # Peak learning rate
@@ -107,7 +108,7 @@ checkpointing:
 
 # Evaluation
 evaluation:
-  do_eval: true
+  do_eval: true                     # Enable evaluation during training
   eval_strategy: "steps"
   per_device_eval_batch_size: 1
   eval_accumulation_steps: 4

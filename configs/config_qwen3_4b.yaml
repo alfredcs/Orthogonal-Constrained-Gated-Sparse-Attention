@@ -1,5 +1,5 @@
 # OrthGSA Training Configuration for Qwen3-4B on SlimPajama-627B
-# Target: 4x 44GB GPUs, >65% memory usage, >90% utilization
+# Target: 8x 44GB GPUs, >65% memory usage, >90% utilization
 
 # Model Configuration
 model:
@@ -23,22 +23,21 @@ model:
     gate_bias_init: 0.5             # Initial gate bias
 
 # Data Configuration
-# Supports both streaming from HuggingFace and pre-downloaded local datasets
-# Local path is used automatically if the directory exists and is not empty
-# To download locally: python -c "from datasets import load_dataset; load_dataset('cerebras/SlimPajama-627B').save_to_disk('~/datasets/SlimPajama-627B')"
+# Supports S3 streaming, HuggingFace hub, and local datasets
+# dataset_path takes priority if set (supports s3:// URIs for direct S3 streaming)
 data:
-  dataset: "cerebras/SlimPajama-627B"
-  local_path: "~/datasets/SlimPajama-627B"  # Pre-downloaded dataset path (recommended to avoid rate limits)
+  dataset: "cerebras/SlimPajama-627B"  # Fallback HuggingFace identifier
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"  # S3 path (streams directly, no download)
   max_seq_length: 1024              # Reduced sequence length for memory (increase for longer context)
   num_workers: 2                    # DataLoader workers per GPU (reduced for local loading)
   streaming: true                   # Use streaming for large dataset
 
 # Training Configuration
 training:
-  # Batch sizes reduced for 4x44GB GPUs with n_streams=4
+  # Batch sizes reduced for 8x44GB GPUs with n_streams=4
   per_device_train_batch_size: 1    # Per GPU batch size (reduced for memory)
   per_device_eval_batch_size: 2     # Larger for eval (no gradients)
-  gradient_accumulation_steps: 32   # Effective batch = 4*1*32 = 128
+  gradient_accumulation_steps: 32   # Effective batch = 8*1*32 = 256
 
   # Learning rate (scaled for effective batch size)
   learning_rate: 2.0e-5             # Peak learning rate
@@ -74,8 +73,8 @@ training:
 #   - DeepSpeed ZeRO-3: ~12GB/GPU - for very memory-constrained setups
 #
 # Launch commands:
-#   DeepSpeed: deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
-#   DDP:       torchrun --nproc_per_node=4 scripts/train.py --config configs/config_qwen3_4b.yaml
+#   DeepSpeed: deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
+#   DDP:       torchrun --nproc_per_node=8 scripts/train.py --config configs/config_qwen3_4b.yaml
 distributed:
   strategy: "deepspeed"             # Recommended: use DeepSpeed for multi-GPU
   # Alternative: "fsdp" or "ddp" (requires more memory per GPU)

@@ -37,6 +37,9 @@ dependencies = [
     "scipy>=1.11.0",
     "einops>=0.7.0",
     "deepspeed>=0.14.0",
+    # S3 storage (for streaming datasets from S3 using boto3)
+    "boto3>=1.28.0",
+    "botocore>=1.31.0",
 ]
 
 [project.optional-dependencies]
@@ -75,6 +78,12 @@ dev-dependencies = [
     "black>=23.0.0",
     "isort>=5.12.0",
     "ruff>=0.1.0",
+]
+
+# Ensure compatible S3 package versions are resolved together
+constraint-dependencies = [
+    "botocore>=1.31.0",
+    "boto3>=1.28.0",
 ]
 
 [tool.uv.sources]

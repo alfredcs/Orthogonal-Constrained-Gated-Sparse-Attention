@@ -1,6 +1,6 @@
 # OrthGSA Training Configuration for Qwen3-8B on SlimPajama-627B
-# Target: 8x 44GB GPUs, 32K context window
-# Memory estimate: ~38-42GB per GPU with DeepSpeed ZeRO-3 + CPU offload
+# Target: 8x 44GB GPUs, 10K context window
+# Memory estimate: ~30-35GB per GPU with DeepSpeed ZeRO-3 + CPU offload
 
 # Model Configuration
 model:
@@ -8,18 +8,18 @@ model:
 
   # OrthGSA-specific parameters (using Cayley Transform for orthogonal constraints)
   orthgsa:
-    n_streams: 2                    # Reduced for memory (8B + 32K context)
+    n_streams: 2                    # Reduced for memory (8B + 10K context)
     alpha_init: 0.01                # Initial scaling for orthogonal HC coefficients
     cayley_scaling: 0.1             # Scaling for Cayley transform input
 
-  # GSA parameters - tuned for 32K context with memory constraints
+  # GSA parameters - tuned for 10K context
   gsa:
     enabled: true
-    k_base: 512                     # Reduced for memory
+    k_base: 512                     # Base for 10K context
     k_min: 128                      # Minimum k
-    k_max: 1024                     # Maximum k for 32K context
-    indexer_heads: 4                # Reduced indexer heads for memory
-    indexer_dim: 64                 # Reduced indexer dimension
+    k_max: 1024                     # Maximum k
+    indexer_heads: 4                # Indexer heads
+    indexer_dim: 64                 # Indexer dimension
     adaptive_k: true                # Enable adaptive k selection
     gate_bias_init: 0.5             # Initial gate bias
 
@@ -27,19 +27,19 @@ model:
 # Supports S3 streaming, HuggingFace hub, and local datasets
 data:
   dataset: "cerebras/SlimPajama-627B"  # Fallback HuggingFace identifier
-  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"  # S3 path (streams directly)
-  max_seq_length: 32768             # 32K context window
-  num_workers: 2                    # Reduced workers to save memory
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"  # S3 path (streams directly, no download)
+  max_seq_length: 10240             # 10K context window
+  num_workers: 0                    # Disable multiprocessing to save memory (data loads in main process)
   streaming: true                   # Use streaming for large dataset
 
 # Training Configuration
 training:
-  # Batch sizes optimized for 8x44GB GPUs with 32K context
-  per_device_train_batch_size: 1    # Per GPU batch size
-  per_device_eval_batch_size: 1     # Same for eval due to long context
-  gradient_accumulation_steps: 16   # Reduced, effective batch = 8*1*16 = 128
+  # Batch sizes optimized for 8x44GB GPUs with 10K context (memory-optimized)
+  per_device_train_batch_size: 1    # Per GPU batch size (cannot reduce further)
+  per_device_eval_batch_size: 1     # Same for eval
+  gradient_accumulation_steps: 16   # Effective batch = 8*1*16 = 128
 
-  # Learning rate (reduced for 8B model)
+  # Learning rate
   learning_rate: 1.5e-5             # Peak learning rate
   lr_scheduler_type: "cosine"
   warmup_ratio: 0.03                # 3% warmup
@@ -55,7 +55,7 @@ training:
   # Precision and optimization
   bf16: true                        # Use BF16 mixed precision
   tf32: true                        # Enable TF32 on Ampere+
-  gradient_checkpointing: true      # Critical for long context memory
+  gradient_checkpointing: true      # Critical for memory
 
   # Optimizer
   optim: "adamw_torch_fused"        # Fused AdamW
@@ -64,15 +64,13 @@ training:
   adam_epsilon: 1.0e-8
 
 # Distributed Training Configuration
-# IMPORTANT: 8B model + 32K context requires ZeRO-3 with CPU offloading on 44GB GPUs
 distributed:
-  strategy: "deepspeed"             # DeepSpeed for multi-GPU
-  deepspeed_config: "configs/deepspeed_zero3_32k.json"
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero3_10k.json"
 
-  # FSDP config (alternative)
   fsdp_config:
     sharding_strategy: "FULL_SHARD"
-    cpu_offload: true               # Enable CPU offload
+    cpu_offload: true
     backward_prefetch: "BACKWARD_PRE"
     state_dict_type: "FULL_STATE_DICT"
     limit_all_gathers: true
@@ -82,17 +80,10 @@ distributed:
 
 # Memory Optimization
 memory:
-  # Target ~90% of 44GB = ~40GB per GPU
-  target_memory_utilization: 0.90
-
-  # Activation checkpointing - essential for 32K context
+  target_memory_utilization: 0.80   # Leave more headroom for 10K context
   activation_checkpointing: true
   checkpoint_layers: "all"
-
-  # Efficient attention - critical for long context
   use_flash_attention: true
-
-  # Batch finding
   auto_find_batch_size: false
 
 # Logging Configuration
@@ -101,11 +92,11 @@ logging:
     enabled: true
     project: "orthgsa-qwen3-8b"
     entity: null
-    run_name: "qwen3-8b-32k-ctx"
-    tags: ["orthgsa", "qwen3-8b", "slimpajama", "32k-context", "cayley-transform", "zero3"]
+    run_name: "qwen3-8b-10k-ctx"
+    tags: ["orthgsa", "qwen3-8b", "slimpajama", "10k-context", "cayley-transform", "zero3"]
     log_model: false
 
-  output_dir: "./outputs/orthgsa-qwen3-8b-32k"
+  output_dir: "./outputs/orthgsa-qwen3-8b-10k"
   logging_dir: "./logs"
   report_to: ["wandb", "tensorboard"]
 
@@ -117,7 +108,7 @@ checkpointing:
 
 # Evaluation
 evaluation:
-  do_eval: true
+  do_eval: false                    # Disable eval during training to save memory (run separately)
   eval_strategy: "steps"
   per_device_eval_batch_size: 1
   eval_accumulation_steps: 4

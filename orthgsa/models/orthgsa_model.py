@@ -20,6 +20,142 @@ from ..layers.mhc import ManifoldHyperConnection, RMSNorm
 logger = logging.getLogger(__name__)
 
 
+def chunked_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    chunk_size: int = 1024,
+    ignore_index: int = -100,
+) -> torch.Tensor:
+    """
+    Compute cross-entropy loss in chunks to reduce peak memory usage.
+
+    Instead of materializing the full [batch*seq_len, vocab_size] tensor,
+    we process chunks along the sequence dimension.
+
+    Args:
+        logits: [batch, seq_len, vocab_size] - NOT shifted
+        labels: [batch, seq_len] - NOT shifted
+        chunk_size: Number of tokens to process at once
+        ignore_index: Label index to ignore in loss computation
+
+    Returns:
+        Scalar loss tensor
+    """
+    # Shift for causal LM (predict next token)
+    shift_logits = logits[..., :-1, :]  # [B, L-1, V]
+    shift_labels = labels[..., 1:]       # [B, L-1]
+
+    batch_size, seq_len, vocab_size = shift_logits.shape
+
+    # Flatten batch dimension into sequence
+    shift_logits = shift_logits.reshape(-1, vocab_size)  # [B*(L-1), V]
+    shift_labels = shift_labels.reshape(-1)               # [B*(L-1)]
+
+    total_tokens = shift_labels.numel()
+
+    # Count valid tokens (not ignored)
+    valid_mask = shift_labels != ignore_index
+    num_valid = valid_mask.sum()
+
+    if num_valid == 0:
+        return torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+
+    # Process in chunks
+    total_loss = torch.tensor(0.0, device=logits.device, dtype=torch.float32)
+
+    for start_idx in range(0, total_tokens, chunk_size):
+        end_idx = min(start_idx + chunk_size, total_tokens)
+
+        chunk_logits = shift_logits[start_idx:end_idx]  # [chunk, V]
+        chunk_labels = shift_labels[start_idx:end_idx]  # [chunk]
+
+        # Compute loss for this chunk (reduction='none' to handle masking ourselves)
+        chunk_loss = F.cross_entropy(
+            chunk_logits,
+            chunk_labels,
+            ignore_index=ignore_index,
+            reduction='sum'
+        )
+
+        total_loss = total_loss + chunk_loss
+
+    # Average over valid tokens
+    return total_loss / num_valid
+
+
+def chunked_lm_loss(
+    hidden_states: torch.Tensor,
+    lm_head: nn.Module,
+    labels: torch.Tensor,
+    chunk_size: int = 512,
+    ignore_index: int = -100,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    Compute language modeling loss without materializing full logits tensor.
+
+    This is more memory-efficient for long sequences as it:
+    1. Processes hidden states in chunks
+    2. Computes logits for each chunk
+    3. Immediately computes loss and discards logits
+
+    Args:
+        hidden_states: [batch, seq_len, hidden_dim] - Final hidden states
+        lm_head: The language model head (linear projection to vocab)
+        labels: [batch, seq_len] - Target token IDs
+        chunk_size: Number of tokens to process at once
+        ignore_index: Label index to ignore
+
+    Returns:
+        Tuple of (loss, None) - logits are not returned to save memory
+    """
+    batch_size, seq_len, hidden_dim = hidden_states.shape
+
+    # Shift labels for causal LM
+    shift_labels = labels[..., 1:].contiguous()  # [B, L-1]
+    shift_labels_flat = shift_labels.reshape(-1)  # [B*(L-1)]
+
+    # We only need hidden states for positions :-1 (to predict next token)
+    shift_hidden = hidden_states[..., :-1, :].contiguous()  # [B, L-1, H]
+    shift_hidden_flat = shift_hidden.reshape(-1, hidden_dim)  # [B*(L-1), H]
+
+    total_tokens = shift_labels_flat.numel()
+
+    # Count valid tokens
+    valid_mask = shift_labels_flat != ignore_index
+    num_valid = valid_mask.sum()
+
+    if num_valid == 0:
+        return torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype), None
+
+    # Process in chunks to avoid materializing full logits
+    total_loss = torch.tensor(0.0, device=hidden_states.device, dtype=torch.float32)
+
+    for start_idx in range(0, total_tokens, chunk_size):
+        end_idx = min(start_idx + chunk_size, total_tokens)
+
+        # Get chunk of hidden states
+        chunk_hidden = shift_hidden_flat[start_idx:end_idx]  # [chunk, H]
+        chunk_labels = shift_labels_flat[start_idx:end_idx]  # [chunk]
+
+        # Compute logits for this chunk only
+        chunk_logits = lm_head(chunk_hidden)  # [chunk, V]
+
+        # Compute loss and immediately discard logits
+        chunk_loss = F.cross_entropy(
+            chunk_logits,
+            chunk_labels,
+            ignore_index=ignore_index,
+            reduction='sum'
+        )
+
+        total_loss = total_loss + chunk_loss
+
+        # Explicitly delete to free memory
+        del chunk_logits, chunk_hidden
+
+    return total_loss / num_valid, None
+
+
 class OrthGSAConfig:
     """Configuration for OrthGSA modifications."""
 
@@ -173,14 +309,45 @@ class OrthGSAForCausalLM(nn.Module):
         # For ZeRO-3, use low_cpu_mem_usage=True to reduce peak memory during loading
         # DeepSpeed.initialize() will handle the weight sharding afterwards
         logger.info(f"Loading base model: {base_model_name}")
-        self.base_model = AutoModelForCausalLM.from_pretrained(
-            base_model_name,
-            config=self.config,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            trust_remote_code=True,
-            low_cpu_mem_usage=low_cpu_mem_usage,
-        )
+
+        # Try to use Flash Attention 2 for memory efficiency
+        attn_implementation = "flash_attention_2"
+        try:
+            self.base_model = AutoModelForCausalLM.from_pretrained(
+                base_model_name,
+                config=self.config,
+                torch_dtype=torch_dtype,
+                device_map=device_map,
+                trust_remote_code=True,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+                attn_implementation=attn_implementation,
+            )
+            logger.info(f"Loaded model with {attn_implementation}")
+        except Exception as e:
+            logger.warning(f"Flash Attention 2 not available ({e}), falling back to SDPA")
+            # Fallback to SDPA (scaled dot product attention) which is also memory efficient
+            try:
+                self.base_model = AutoModelForCausalLM.from_pretrained(
+                    base_model_name,
+                    config=self.config,
+                    torch_dtype=torch_dtype,
+                    device_map=device_map,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=low_cpu_mem_usage,
+                    attn_implementation="sdpa",
+                )
+                logger.info("Loaded model with SDPA attention")
+            except Exception:
+                # Final fallback to default
+                self.base_model = AutoModelForCausalLM.from_pretrained(
+                    base_model_name,
+                    config=self.config,
+                    torch_dtype=torch_dtype,
+                    device_map=device_map,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=low_cpu_mem_usage,
+                )
+                logger.info("Loaded model with default attention")
 
         # Get architecture components
         self._setup_architecture()
@@ -446,25 +613,32 @@ class OrthGSAForCausalLM(nn.Module):
         if self.final_norm is not None:
             hidden_states = self.final_norm(hidden_states)
 
-        # LM head
-        if self.lm_head is not None:
-            logits = self.lm_head(hidden_states)
-        else:
-            logits = self.base_model.lm_head(hidden_states)
+        # Get LM head reference
+        lm_head = self.lm_head if self.lm_head is not None else self.base_model.lm_head
 
-        # Compute loss if labels provided
+        # Compute loss and optionally logits
         loss = None
+        logits = None
+
         if labels is not None:
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1)
+            # Use chunked loss computation to avoid materializing full logits tensor
+            # This saves ~9GB for 12K context with 152K vocab
+            loss, _ = chunked_lm_loss(
+                hidden_states,
+                lm_head,
+                labels,
+                chunk_size=512,  # Process 512 tokens at a time
+                ignore_index=-100,
             )
+            # Only compute full logits if needed for output
+            if not return_dict or output_hidden_states or output_attentions:
+                logits = lm_head(hidden_states)
+        else:
+            # No labels - compute full logits for inference
+            logits = lm_head(hidden_states)
 
         if not return_dict:
-            output = (logits,)
+            output = (logits,) if logits is not None else ()
             if output_hidden_states:
                 output += (all_hidden_states,)
             if output_attentions:

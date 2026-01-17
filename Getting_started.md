@@ -197,11 +197,54 @@ huggingface-cli login
 
 ## 4. Dataset Preparation
 
-OrthGSA uses the **SlimPajama-627B** dataset from Cerebras, available on Hugging Face.
+OrthGSA uses the **SlimPajama-627B** dataset, available via S3 bucket for direct streaming (no download required).
 
-### Step 4.1: Option A - Use Streaming (Default)
+### Step 4.1: Option A - S3 Streaming (Default, Recommended)
 
-By default, the dataset streams from Hugging Face. Verify access:
+By default, the dataset streams directly from S3 without downloading to local storage. This is the recommended approach as it:
+- Requires no local storage for the dataset (~2TB)
+- Avoids HuggingFace rate limits
+- Works out of the box with the default configuration
+
+**Requirements**: Install `s3fs` for S3 access:
+
+```bash
+pip install s3fs
+```
+
+Verify S3 streaming access:
+
+```bash
+python -c "
+import s3fs
+fs = s3fs.S3FileSystem(anon=True)
+files = fs.ls('public-datasets-multimodality/SlimPajama-627B/train')[:5]
+print('S3 bucket accessible!')
+print(f'Sample files: {files}')
+"
+```
+
+The default configuration in all config files uses S3 streaming:
+
+```yaml
+data:
+  dataset: "cerebras/SlimPajama-627B"  # Fallback HuggingFace identifier
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"  # S3 path (streams directly, no download)
+  streaming: true
+```
+
+### Step 4.2: Option B - HuggingFace Streaming (Alternative)
+
+If you prefer to stream from HuggingFace instead of S3, remove or comment out the `dataset_path` in your config:
+
+```yaml
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  # dataset_path: "s3://..."  # Comment out to use HuggingFace
+  streaming: true
+```
+
+Verify HuggingFace access:
 
 ```bash
 python -c "
@@ -214,9 +257,9 @@ print(f'Text preview: {sample[\"text\"][:200]}...')
 "
 ```
 
-### Step 4.2: Option B - Use Pre-Downloaded Dataset (Recommended)
+### Step 4.3: Option C - Pre-Downloaded Local Dataset
 
-For faster training and to avoid Hugging Face rate limits, pre-download the dataset:
+For offline training or maximum throughput, you can pre-download the dataset locally:
 
 ```bash
 # Download SlimPajama-627B to local storage
@@ -228,18 +271,19 @@ ds.save_to_disk('~/datasets/SlimPajama-627B')
 "
 ```
 
-Then configure the local path in `configs/config_qwen3_4b.yaml`:
+Then configure the local path in your config (remove `dataset_path` to use local):
 
 ```yaml
 data:
   dataset: "cerebras/SlimPajama-627B"
+  # dataset_path: "s3://..."  # Comment out to use local path
   local_path: "~/datasets/SlimPajama-627B"  # Pre-downloaded dataset path
-  num_workers: 2                            # Reduced for local loading
+  num_workers: 2
 ```
 
-The training script automatically uses the local path if the directory exists and is not empty. Otherwise, it falls back to streaming from Hugging Face.
+**Priority order**: `dataset_path` (S3) > `local_path` > `dataset` (HuggingFace hub)
 
-### Step 4.3: Download Base Model (Optional)
+### Step 4.4: Download Base Model (Optional)
 
 Pre-download the base model. Choose based on your training configuration:
 
@@ -736,7 +780,18 @@ MAX_JOBS=4 uv pip install flash-attn --no-build-isolation
 
 ### Issue: Hugging Face Rate Limits
 
-Download the dataset locally to avoid rate limits:
+The default configuration uses S3 streaming which avoids HuggingFace rate limits entirely. If you're still using HuggingFace streaming and encounter rate limits, switch to S3 (recommended) or download locally:
+
+**Option 1: Use S3 streaming (recommended)**
+
+Ensure your config has `dataset_path` set:
+
+```yaml
+data:
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"
+```
+
+**Option 2: Download to local storage**
 
 ```bash
 # Download to local storage
@@ -747,11 +802,46 @@ ds.save_to_disk('~/datasets/SlimPajama-627B')
 "
 ```
 
-Then set `local_path` in config:
+Then set `local_path` in config (and remove `dataset_path`):
 
 ```yaml
 data:
+  # dataset_path: "s3://..."  # Comment out
   local_path: "~/datasets/SlimPajama-627B"
+```
+
+### Issue: S3 Dataset Access Fails
+
+If you encounter errors accessing the S3 dataset:
+
+```
+botocore.exceptions.NoCredentialsError: Unable to locate credentials
+```
+
+**Solution**: The S3 bucket is public and uses anonymous access. Ensure `s3fs` is installed:
+
+```bash
+pip install s3fs
+```
+
+If the error persists, verify the bucket is accessible:
+
+```bash
+python -c "
+import s3fs
+fs = s3fs.S3FileSystem(anon=True)
+print('Testing S3 access...')
+files = fs.ls('public-datasets-multimodality/SlimPajama-627B')
+print(f'Found {len(files)} items. S3 access working!')
+"
+```
+
+If S3 is blocked in your network, fall back to HuggingFace streaming by removing `dataset_path` from your config:
+
+```yaml
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  # dataset_path: "s3://..."  # Comment out to use HuggingFace
 ```
 
 ### Issue: DeepSpeed installation fails

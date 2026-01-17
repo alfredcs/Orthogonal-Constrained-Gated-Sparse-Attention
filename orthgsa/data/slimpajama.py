@@ -1,41 +1,235 @@
 """
 SlimPajama Dataset Loading
 
-Efficiently loads the cerebras/SlimPajama-627B dataset for training.
-Uses streaming to handle the large dataset size.
+Efficiently loads the SlimPajama-627B dataset for training.
+Supports streaming from S3 bucket without downloading to local filesystem.
 """
 
 import os
+import io
+import json
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 from transformers import AutoTokenizer, PreTrainedTokenizer
 from datasets import load_dataset, IterableDataset as HFIterableDataset
-from typing import Optional, Dict, List, Any, Iterator
+from typing import Optional, Dict, List, Any, Iterator, Generator
 import logging
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Register zstd compression with fsspec (required for SlimPajama dataset)
-def _register_zstd_compression():
-    """Register zstd compression codec with fsspec if available."""
-    try:
-        import zstandard
-        import fsspec.compression
 
-        if 'zstd' not in fsspec.compression.compr:
-            def zstd_open(f, mode='rb', **kwargs):
-                if 'r' in mode:
-                    return zstandard.ZstdDecompressor().stream_reader(f)
-                else:
-                    return zstandard.ZstdCompressor().stream_writer(f)
+def _is_s3_path(path: str) -> bool:
+    """Check if the path is an S3 URI."""
+    return path.startswith("s3://")
 
-            fsspec.compression.register_compression('zstd', zstd_open, 'zstd')
-            logger.debug("Registered zstd compression with fsspec")
-    except ImportError:
-        logger.warning("zstandard not installed, zstd compressed datasets may not load")
 
-_register_zstd_compression()
+def _parse_s3_path(s3_path: str) -> tuple:
+    """Parse S3 URI into bucket and prefix."""
+    path = s3_path.replace("s3://", "").rstrip("/")
+    parts = path.split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+    return bucket, prefix
+
+
+def _get_s3_client():
+    """Get boto3 S3 client using default credentials."""
+    import boto3
+    session = boto3.Session(profile_name="default")
+    return session.client("s3")
+
+
+def _list_s3_files(bucket: str, prefix: str, extensions: List[str]) -> List[str]:
+    """List files in S3 bucket with given extensions."""
+    s3 = _get_s3_client()
+    files = []
+
+    paginator = s3.get_paginator("list_objects_v2")
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        if "Contents" not in page:
+            continue
+        for obj in page["Contents"]:
+            key = obj["Key"]
+            if any(key.endswith(ext) for ext in extensions):
+                files.append(key)
+
+    return sorted(files)
+
+
+def _stream_s3_jsonl_zst(bucket: str, key: str) -> Generator[Dict, None, None]:
+    """Stream and decompress a .jsonl.zst file from S3."""
+    import zstandard as zstd
+
+    s3 = _get_s3_client()
+
+    # Get the object
+    response = s3.get_object(Bucket=bucket, Key=key)
+    body = response["Body"]
+
+    # Create zstd decompressor
+    dctx = zstd.ZstdDecompressor()
+
+    # Stream decompress and parse JSONL
+    with dctx.stream_reader(body) as reader:
+        text_stream = io.TextIOWrapper(reader, encoding="utf-8")
+        for line in text_stream:
+            line = line.strip()
+            if line:
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+
+def _stream_s3_jsonl(bucket: str, key: str) -> Generator[Dict, None, None]:
+    """Stream a .jsonl file from S3."""
+    s3 = _get_s3_client()
+
+    response = s3.get_object(Bucket=bucket, Key=key)
+    body = response["Body"]
+
+    for line in body.iter_lines():
+        line = line.decode("utf-8").strip()
+        if line:
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def _stream_s3_json_zst(bucket: str, key: str) -> Generator[Dict, None, None]:
+    """Stream and decompress a .json.zst file from S3."""
+    import zstandard as zstd
+
+    s3 = _get_s3_client()
+
+    response = s3.get_object(Bucket=bucket, Key=key)
+    body = response["Body"]
+
+    dctx = zstd.ZstdDecompressor()
+
+    with dctx.stream_reader(body) as reader:
+        data = reader.read()
+        try:
+            # Try as JSON array
+            items = json.loads(data)
+            if isinstance(items, list):
+                for item in items:
+                    yield item
+            else:
+                yield items
+        except json.JSONDecodeError:
+            # Try as JSONL
+            for line in data.decode("utf-8").split("\n"):
+                line = line.strip()
+                if line:
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+
+class S3StreamingDataset(IterableDataset):
+    """
+    Custom streaming dataset that reads directly from S3 using boto3.
+    Avoids s3fs/aiobotocore compatibility issues.
+    """
+
+    def __init__(
+        self,
+        s3_path: str,
+        split: str = "train",
+        seed: int = 42,
+        shuffle_files: bool = True,
+    ):
+        self.s3_path = s3_path
+        self.split = split
+        self.seed = seed
+        self.shuffle_files = shuffle_files
+
+        # Parse S3 path
+        self.bucket, self.prefix = _parse_s3_path(s3_path)
+
+        # Add split to prefix if needed
+        split_prefix = f"{self.prefix}/{split}" if self.prefix else split
+
+        # List files
+        extensions = [".jsonl.zst", ".json.zst", ".jsonl", ".json"]
+        self.files = _list_s3_files(self.bucket, split_prefix, extensions)
+
+        # If no files found with split prefix, try without
+        if not self.files:
+            self.files = _list_s3_files(self.bucket, self.prefix, extensions)
+
+        if not self.files:
+            raise FileNotFoundError(
+                f"No data files found in S3 path: {s3_path}\n"
+                f"Bucket: {self.bucket}, Prefix: {self.prefix}\n"
+                f"Tried extensions: {extensions}"
+            )
+
+        logger.info(f"Found {len(self.files)} files in s3://{self.bucket}/{self.prefix}")
+
+    def _get_file_streamer(self, key: str):
+        """Get appropriate streamer based on file extension."""
+        if key.endswith(".jsonl.zst"):
+            return _stream_s3_jsonl_zst(self.bucket, key)
+        elif key.endswith(".json.zst"):
+            return _stream_s3_json_zst(self.bucket, key)
+        elif key.endswith(".jsonl"):
+            return _stream_s3_jsonl(self.bucket, key)
+        else:
+            raise ValueError(f"Unsupported file format: {key}")
+
+    def __iter__(self) -> Iterator[Dict]:
+        worker_info = torch.utils.data.get_worker_info()
+
+        files = self.files.copy()
+
+        # Shuffle files if requested
+        if self.shuffle_files:
+            import random
+            rng = random.Random(self.seed)
+            rng.shuffle(files)
+
+        # Shard files across workers
+        if worker_info is not None:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+            files = files[worker_id::num_workers]
+
+        # Stream from each file
+        for key in files:
+            try:
+                for example in self._get_file_streamer(key):
+                    yield example
+            except Exception as e:
+                logger.warning(f"Error reading {key}: {e}")
+                continue
+
+
+def _load_dataset_from_s3(
+    s3_path: str,
+    split: str = "train",
+    streaming: bool = True,
+    seed: int = 42,
+) -> S3StreamingDataset:
+    """
+    Load dataset directly from S3 bucket using boto3.
+
+    Args:
+        s3_path: S3 URI (e.g., s3://bucket-name/path/to/dataset)
+        split: Dataset split to load
+        streaming: Whether to stream the dataset (always True for S3)
+        seed: Random seed for file shuffling
+
+    Returns:
+        S3StreamingDataset
+    """
+    logger.info(f"Loading dataset from S3: {s3_path} (split={split})")
+    return S3StreamingDataset(s3_path, split=split, seed=seed)
 
 
 @dataclass
@@ -106,6 +300,7 @@ class SlimPajamaDataset(IterableDataset):
     Iterable dataset for SlimPajama-627B.
 
     Uses streaming to efficiently handle the large dataset.
+    Supports loading from S3 bucket directly without downloading.
     """
 
     def __init__(
@@ -117,6 +312,7 @@ class SlimPajamaDataset(IterableDataset):
         rank: int = 0,
         world_size: int = 1,
         buffer_size: int = 10000,
+        dataset_path: Optional[str] = None,
     ):
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -125,17 +321,24 @@ class SlimPajamaDataset(IterableDataset):
         self.rank = rank
         self.world_size = world_size
         self.buffer_size = buffer_size
+        self._is_s3 = False
 
-        # Load dataset in streaming mode
-        logger.info(f"Loading SlimPajama-627B (streaming, split={split})")
-        self.dataset = load_dataset(
-            "cerebras/SlimPajama-627B",
-            split=split,
-            streaming=True,
-        )
-
-        # Shuffle the dataset
-        self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
+        # Load dataset - supports S3 paths, local paths, and HuggingFace hub
+        if dataset_path and _is_s3_path(dataset_path):
+            # Load from S3 bucket using boto3 (avoids s3fs/aiobotocore issues)
+            logger.info(f"Loading from S3: {dataset_path} (streaming, split={split})")
+            self.dataset = _load_dataset_from_s3(dataset_path, split=split, seed=seed)
+            self._is_s3 = True
+        elif dataset_path:
+            # Load from local or HuggingFace path
+            logger.info(f"Loading from {dataset_path} (streaming, split={split})")
+            self.dataset = load_dataset(dataset_path, split=split, streaming=True)
+            self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
+        else:
+            # Default to HuggingFace hub
+            logger.info(f"Loading SlimPajama-627B from HuggingFace (streaming, split={split})")
+            self.dataset = load_dataset("cerebras/SlimPajama-627B", split=split, streaming=True)
+            self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
 
     def _tokenize(self, example: Dict[str, Any]) -> Dict[str, List[int]]:
         """Tokenize a single example."""
@@ -181,6 +384,8 @@ class PackedSlimPajamaDataset(IterableDataset):
 
     Instead of padding each sequence, sequences are concatenated and
     chunked into fixed-length segments.
+
+    Supports loading from S3 bucket directly without downloading.
     """
 
     def __init__(
@@ -194,6 +399,7 @@ class PackedSlimPajamaDataset(IterableDataset):
         buffer_size: int = 10000,
         dataset_name: str = "cerebras/SlimPajama-627B",
         local_path: Optional[str] = None,
+        dataset_path: Optional[str] = None,
     ):
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -203,32 +409,34 @@ class PackedSlimPajamaDataset(IterableDataset):
         self.world_size = world_size
         self.dataset_name = dataset_name
         self.local_path = local_path
+        self.dataset_path = dataset_path
+        self._is_s3 = False
 
-        # Load dataset from local path if available, otherwise from HuggingFace
-        if local_path:
+        # Priority: dataset_path (S3 or explicit path) > local_path > dataset_name (HuggingFace)
+        if dataset_path and _is_s3_path(dataset_path):
+            # Load directly from S3 bucket using boto3 (avoids s3fs/aiobotocore issues)
+            logger.info(f"Loading from S3: {dataset_path} (streaming, packed, split={split})")
+            self.dataset = _load_dataset_from_s3(dataset_path, split=split, seed=seed)
+            self._is_s3 = True
+        elif dataset_path:
+            # Load from explicit path (local or HuggingFace identifier)
+            logger.info(f"Loading from {dataset_path} (streaming, packed, split={split})")
+            self.dataset = load_dataset(dataset_path, split=split, streaming=True)
+            self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
+        elif local_path:
             expanded_path = os.path.expanduser(local_path)
             if os.path.exists(expanded_path) and os.listdir(expanded_path):
                 logger.info(f"Loading from local path: {expanded_path} (streaming, packed, split={split})")
-                self.dataset = load_dataset(
-                    expanded_path,
-                    split=split,
-                    streaming=True,
-                )
+                self.dataset = load_dataset(expanded_path, split=split, streaming=True)
+                self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
             else:
-                logger.info(f"Local path not found or empty, downloading {dataset_name} (streaming, packed, split={split})")
-                self.dataset = load_dataset(
-                    dataset_name,
-                    split=split,
-                    streaming=True,
-                )
+                logger.info(f"Local path not found or empty, using {dataset_name} (streaming, packed, split={split})")
+                self.dataset = load_dataset(dataset_name, split=split, streaming=True)
+                self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
         else:
             logger.info(f"Loading {dataset_name} (streaming, packed, split={split})")
-            self.dataset = load_dataset(
-                dataset_name,
-                split=split,
-                streaming=True,
-            )
-        self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
+            self.dataset = load_dataset(dataset_name, split=split, streaming=True)
+            self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
 
         # EOS token for sequence separation
         self.eos_token_id = tokenizer.eos_token_id
@@ -288,6 +496,7 @@ def get_slimpajama_dataloader(
     prefetch_factor: int = 2,
     dataset_name: str = "cerebras/SlimPajama-627B",
     local_path: Optional[str] = None,
+    dataset_path: Optional[str] = None,
 ) -> DataLoader:
     """
     Create DataLoader for dataset.
@@ -304,8 +513,9 @@ def get_slimpajama_dataloader(
         packed: Whether to use packed sequences
         pin_memory: Whether to pin memory
         prefetch_factor: Prefetch factor for DataLoader
-        dataset_name: Name of the dataset to load
+        dataset_name: Name of the dataset to load (HuggingFace identifier)
         local_path: Local path to pre-downloaded dataset (optional)
+        dataset_path: S3 URI or path to dataset (takes priority over local_path and dataset_name)
 
     Returns:
         DataLoader for the dataset
@@ -321,6 +531,7 @@ def get_slimpajama_dataloader(
             world_size=world_size,
             dataset_name=dataset_name,
             local_path=local_path,
+            dataset_path=dataset_path,
         )
     else:
         dataset = SlimPajamaDataset(
@@ -330,6 +541,7 @@ def get_slimpajama_dataloader(
             seed=seed,
             rank=rank,
             world_size=world_size,
+            dataset_path=dataset_path,
         )
 
     # Create data collator

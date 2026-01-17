@@ -176,18 +176,19 @@ def main():
         adaptive_k=model_config["gsa"]["adaptive_k"],
     )
 
-    # Create model
-    # Note: For ZeRO-3 with pretrained models, we load normally with low_cpu_mem_usage=True
-    # and let deepspeed.initialize() handle the weight sharding.
-    # deepspeed.zero.Init() is only for randomly initialized models, not from_pretrained().
+    # Create model - load on CPU first to avoid GPU OOM during initialization
     logger.info(f"Loading model: {model_config['base_model']}")
 
+    # Clear CUDA cache before loading
+    torch.cuda.empty_cache()
+
+    # Load model on CPU first, DeepSpeed will handle sharding during initialize()
     model = OrthGSAForCausalLM(
         base_model_name=model_config["base_model"],
         orthgsa_config=orthgsa_cfg,
         torch_dtype=torch.bfloat16 if config["training"]["bf16"] else torch.float32,
-        device_map=None,  # Let DeepSpeed handle device placement
-        low_cpu_mem_usage=True,  # Reduce peak memory during loading for ZeRO-3
+        device_map="cpu",  # Load on CPU first
+        low_cpu_mem_usage=True,
     )
 
     # Log parameter counts
@@ -205,6 +206,7 @@ def main():
     data_config = config["data"]
     dataset_name = data_config.get("dataset", "cerebras/SlimPajama-627B")
     local_path = data_config.get("local_path")
+    dataset_path = data_config.get("dataset_path")  # S3 path or explicit dataset path
 
     train_dataloader = get_slimpajama_dataloader(
         tokenizer=tokenizer,
@@ -218,6 +220,7 @@ def main():
         packed=True,
         dataset_name=dataset_name,
         local_path=local_path,
+        dataset_path=dataset_path,
     )
 
     # Optional evaluation dataloader
@@ -235,6 +238,7 @@ def main():
             packed=True,
             dataset_name=dataset_name,
             local_path=local_path,
+            dataset_path=dataset_path,
         )
 
     # DeepSpeed config - load from external file if specified, otherwise use defaults
@@ -335,6 +339,12 @@ def main():
 
     logger.info("DeepSpeed engine initialized")
 
+    # Clear CUDA cache before training to free memory from initialization
+    torch.cuda.empty_cache()
+    if rank == 0:
+        gpu_mem = get_gpu_memory_info()
+        logger.info(f"GPU memory before training: {gpu_mem.get('allocated_gb', 0):.2f}GB allocated, {gpu_mem.get('reserved_gb', 0):.2f}GB reserved")
+
     # Training loop
     logger.info("Starting training...")
 
@@ -381,6 +391,10 @@ def main():
         model_engine.step()
 
         accumulated_loss += loss.item()
+
+        # Free memory immediately after each step
+        del outputs, batch
+        torch.cuda.empty_cache()
 
         # Check if we've completed a full gradient accumulation cycle
         if model_engine.is_gradient_accumulation_boundary():
