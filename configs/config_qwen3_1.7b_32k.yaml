@@ -1,0 +1,103 @@
+# OrthGSA Training Configuration for Qwen3-1.7B on SlimPajama-627B
+# Target: 8x 44GB GPUs, 32K context window with RoPE scaling
+# Memory-safe configuration for 44GB GPUs
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+
+  # RoPE scaling for extended context (32K / 40K = 0.8x, no scaling needed)
+  rope_scaling: null  # 32K is within original 40K limit
+
+  # OrthGSA-specific parameters
+  orthgsa:
+    n_streams: 2
+    alpha_init: 0.01
+    cayley_scaling: 0.1
+
+  # GSA parameters - tuned for 32K context
+  gsa:
+    enabled: true
+    k_base: 512
+    k_min: 128
+    k_max: 1024
+    indexer_heads: 4
+    indexer_dim: 64
+    adaptive_k: true
+    gate_bias_init: 0.5
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"
+  max_seq_length: 32768             # 32K context window (safe for 44GB GPUs)
+  num_workers: 2
+  streaming: true
+
+# Training Configuration
+training:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16   # Effective batch = 128
+
+  learning_rate: 2.0e-5
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  max_steps: 2000
+  eval_steps: 250
+  save_steps: 500
+  logging_steps: 10
+
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+
+  optim: "adamw_torch_fused"
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration
+distributed:
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero3_1.7b_32k.json"
+
+# Memory Optimization
+memory:
+  target_memory_utilization: 0.70
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+  use_flash_attention: true
+  auto_find_batch_size: false
+
+# Logging Configuration
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-1.7b"
+    entity: null
+    run_name: "qwen3-1.7b-32k"
+    tags: ["orthgsa", "qwen3-1.7b", "slimpajama", "32k-context"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-1.7b-32k"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 3
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation
+evaluation:
+  do_eval: true
+  eval_strategy: "steps"
+  per_device_eval_batch_size: 1
+  eval_accumulation_steps: 4
+
+seed: 42

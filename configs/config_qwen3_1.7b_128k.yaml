@@ -1,0 +1,111 @@
+# OrthGSA Training Configuration for Qwen3-1.7B - 128K Context
+# Target: 8x 44GB GPUs with Sequence Parallelism + ZeRO-3 CPU Offload
+# Strategy: Ring Attention (8-way SP, 16K per GPU) + Aggressive Offload
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+
+  # RoPE scaling for 128K context (128K / 40K = 3.2x)
+  rope_scaling:
+    type: "dynamic"
+    factor: 3.2
+
+  # OrthGSA-specific parameters - MINIMAL for memory
+  orthgsa:
+    n_streams: 1                    # Single stream for memory
+    alpha_init: 0.01
+    cayley_scaling: 0.1
+
+  # GSA parameters
+  gsa:
+    enabled: true
+    k_base: 512
+    k_min: 128
+    k_max: 1024
+    indexer_heads: 4
+    indexer_dim: 64
+    adaptive_k: true
+    gate_bias_init: 0.5
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"
+  max_seq_length: 131072            # 128K context window
+  num_workers: 1                    # Minimal workers
+  streaming: true
+
+# Training Configuration
+training:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 64   # Higher accumulation
+
+  learning_rate: 1.0e-5
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05
+  weight_decay: 0.1
+  max_grad_norm: 0.5
+
+  max_steps: 2000
+  eval_steps: 500
+  save_steps: 500
+  logging_steps: 10
+
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+
+  optim: "adamw_torch_fused"
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration
+distributed:
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero_infinity_128k_aggressive.json"
+
+  # Sequence Parallelism
+  sequence_parallel:
+    enabled: true
+    degree: 8
+    ring_attention: true
+    chunk_size: 16384               # 16K per GPU
+
+# Memory Optimization
+memory:
+  target_memory_utilization: 0.80
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+  use_flash_attention: true
+  auto_find_batch_size: false
+  cpu_offload_activations: true
+
+# Logging
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-1.7b"
+    entity: null
+    run_name: "qwen3-1.7b-128k-ring"
+    tags: ["orthgsa", "qwen3-1.7b", "128k-context", "ring-attention"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-1.7b-128k"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 2
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation - DISABLED to save memory
+evaluation:
+  do_eval: false
+  eval_strategy: "no"
+
+seed: 42

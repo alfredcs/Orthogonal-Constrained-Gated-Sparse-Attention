@@ -19,7 +19,7 @@ from typing import Optional, Dict, Any, List
 import json
 
 import torch
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from transformers import AutoTokenizer
 from tqdm import tqdm
 import yaml

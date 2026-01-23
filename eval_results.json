@@ -1,0 +1,10 @@
+{
+  "checkpoint": "outputs/orthgsa-qwen3-8b-8k/checkpoint-1000/hf_model",
+  "model": "/home/alfred/models/Qwen3-8B",
+  "perplexity": {
+    "loss": 11.6563473072052,
+    "perplexity": 115421.65962921464,
+    "total_tokens": 8192000,
+    "num_steps": 500
+  }
+}

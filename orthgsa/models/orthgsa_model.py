@@ -293,6 +293,8 @@ class OrthGSAForCausalLM(nn.Module):
         torch_dtype: torch.dtype = torch.bfloat16,
         device_map: Optional[str] = None,
         low_cpu_mem_usage: bool = False,
+        max_position_embeddings: Optional[int] = None,
+        rope_scaling: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
@@ -301,6 +303,24 @@ class OrthGSAForCausalLM(nn.Module):
 
         # Load base model config
         self.config = AutoConfig.from_pretrained(base_model_name, trust_remote_code=True)
+
+        # Configure RoPE scaling for extended context lengths
+        if max_position_embeddings is not None:
+            original_max_pos = getattr(self.config, 'max_position_embeddings', 32768)
+            self.config.max_position_embeddings = max_position_embeddings
+
+            # Auto-configure RoPE scaling if extending beyond original
+            if max_position_embeddings > original_max_pos and rope_scaling is None:
+                scaling_factor = max_position_embeddings / original_max_pos
+                rope_scaling = {
+                    "type": "dynamic",  # or "linear" for linear scaling
+                    "factor": scaling_factor,
+                }
+                logger.info(f"Auto-configured RoPE scaling: {rope_scaling}")
+
+        if rope_scaling is not None:
+            self.config.rope_scaling = rope_scaling
+            logger.info(f"RoPE scaling enabled: {rope_scaling}")
 
         # Store OrthGSA config in model config
         self.config.orthgsa = self.orthgsa_config.to_dict()

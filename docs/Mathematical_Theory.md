@@ -1092,11 +1092,32 @@ Block Size: L_r* = √(nL/(n+2))  (optimal for OrthGSA)
 
 ### 4. Communication Overlap for Distributed Training
 
+**Ring Attention for Sequence Parallelism** (Recommended for 64K+ context):
+
+Ring Attention distributes the sequence across GPUs using a ring communication pattern:
+- Each GPU processes a chunk of $L/P$ tokens (where $P$ = number of GPUs)
+- KV cache is exchanged with neighboring GPUs in a ring topology
+- Memory per GPU: $O(L/P \cdot d)$ instead of $O(L \cdot d)$
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                     DUALPIPE COMMUNICATION OVERLAP                              │
+│                     RING ATTENTION SEQUENCE PARALLELISM                         │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
+     GPU 0           GPU 1           GPU 2           GPU 3
+  [chunk 0]       [chunk 1]       [chunk 2]       [chunk 3]
+       │               │               │               │
+       └──────► KV ────┴──────► KV ────┴──────► KV ────┘
+              Ring Communication (async send/recv)
+
+For 64K context on 8 GPUs:
+- Each GPU processes 8K tokens
+- Memory reduction: ~4x compared to full attention
+```
+
+**Pipeline Parallelism with DualPipe Communication Overlap**:
+
+```
 Pipeline Stage i                          Pipeline Stage i+1
 ─────────────────                         ──────────────────
 
@@ -1105,13 +1126,11 @@ Pipeline Stage i                          Pipeline Stage i+1
 │   Attention  │     (x_{l+0.5})            │   Attention  │
 └──────────────┘                            └──────────────┘
        │                                           │
-       │                                           │
        ▼                                           ▼
 ┌──────────────┐                            ┌──────────────┐
 │   OrthGSA    │                            │   OrthGSA    │
 │     FFN      │                            │     FFN      │
 └──────────────┘                            └──────────────┘
-       │                                           │
        │  ═══════════════════════════════▶         │
        │         Async P2P send                    │
 
@@ -1202,6 +1221,7 @@ Combined with sparse selection, this prevents any single token from dominating a
 4. Gated Attention for Large Language Models (arXiv:2505.06708)
 5. Cayley (1846): Sur quelques propriétés des déterminants gauches
 6. Helfrich et al. (2018): Orthogonal Recurrent Neural Networks with Scaled Cayley Transform
+7. **Ring Attention** (arXiv:2310.01889): Ring Attention with Blockwise Transformers for Near-Infinite Context
 
 ---
 

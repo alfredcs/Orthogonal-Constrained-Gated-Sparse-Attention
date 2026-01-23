@@ -1,0 +1,116 @@
+# OrthGSA Training Configuration for Qwen3-1.7B - 256K Context
+# Target: 8x 44GB GPUs with Sequence Parallelism + ZeRO-Infinity
+# Strategy: Ring Attention (8-way sequence parallel) + CPU/NVMe Offload
+# Memory per GPU: ~35-40GB (with sequence chunks of 32K per GPU)
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+
+  # RoPE scaling for 256K context (256K / 40K = 6.4x)
+  rope_scaling:
+    type: "dynamic"                 # Dynamic NTK-aware scaling
+    factor: 6.4                     # 256K / 40K original
+
+  # OrthGSA-specific parameters
+  orthgsa:
+    n_streams: 1                    # Single stream for memory efficiency
+    alpha_init: 0.01
+    cayley_scaling: 0.1
+
+  # GSA parameters - tuned for 256K context
+  gsa:
+    enabled: true
+    k_base: 1024                    # Larger k for ultra-long context
+    k_min: 256
+    k_max: 2048
+    indexer_heads: 4
+    indexer_dim: 64
+    adaptive_k: true
+    gate_bias_init: 0.5
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"
+  max_seq_length: 262144            # 256K context window
+  num_workers: 2
+  streaming: true
+
+# Training Configuration
+training:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 32   # Effective batch = 256
+
+  learning_rate: 1.0e-5             # Lower LR for stability with long context
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05                # Longer warmup for stability
+  weight_decay: 0.1
+  max_grad_norm: 0.5                # More aggressive clipping
+
+  max_steps: 2000
+  eval_steps: 500
+  save_steps: 500
+  logging_steps: 10
+
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+
+  optim: "adamw_torch_fused"
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration
+distributed:
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero_infinity_1.7b_256k.json"
+
+  # Sequence Parallelism Configuration
+  sequence_parallel:
+    enabled: true
+    degree: 8                       # All 8 GPUs for sequence parallelism
+    ring_attention: true            # Use Ring Attention
+    chunk_size: 32768               # 32K tokens per GPU
+
+# Memory Optimization
+memory:
+  target_memory_utilization: 0.90   # Push closer to limit with offload
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+  use_flash_attention: true
+  auto_find_batch_size: false
+
+  # CPU Offloading for activations
+  cpu_offload_activations: true
+
+# Logging Configuration
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-1.7b"
+    entity: null
+    run_name: "qwen3-1.7b-256k-ring-attention"
+    tags: ["orthgsa", "qwen3-1.7b", "slimpajama", "256k-context", "ring-attention", "sequence-parallel"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-1.7b-256k"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 2               # Fewer checkpoints due to size
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation
+evaluation:
+  do_eval: true
+  eval_strategy: "steps"
+  per_device_eval_batch_size: 1
+  eval_accumulation_steps: 8
+
+seed: 42

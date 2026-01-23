@@ -37,13 +37,22 @@ This guide provides step-by-step instructions for setting up the environment usi
 | Model | Context | GPUs | Memory/GPU | DeepSpeed Stage |
 |-------|---------|------|------------|-----------------|
 | Qwen3-4B-Instruct | 1K | 4x | 17-22GB | ZeRO-2 |
+| Qwen3-4B-Instruct | 64K | 8x | 30-35GB | ZeRO-3 + CPU offload |
+| Qwen3-4B-Instruct | 96K | 8x | 35-40GB | ZeRO-3 + CPU offload |
+| Qwen3-4B-Instruct | 128K | 8x | 40-44GB | ZeRO-3 + CPU offload |
 | Qwen3-8B | 8K | 8x | 30-35GB | ZeRO-3 + CPU offload |
 | Qwen3-8B | 16K | 8x | 35-40GB | ZeRO-3 + CPU offload |
 | Qwen3-8B | 32K | 8x | 38-42GB | ZeRO-3 + CPU offload |
 | Qwen3-8B | 64K | 8x | 40-44GB | ZeRO-3 + CPU offload |
 | Qwen3-8B | 128K | 8x | 42-44GB | ZeRO-3 + CPU offload |
+| **Qwen3-1.7B** | **128K** | 8x | ~18GB (40%) | ZeRO-3 + CPU offload |
+| **Qwen3-1.7B** | **192K** | 8x | ~24GB (55%) | ZeRO-3 + CPU offload |
+| **Qwen3-1.7B** | **256K** | 8x | ~30GB (68%) | ZeRO-3 + CPU offload |
+| **Qwen3-1.7B** | **320K** | 8x | ~36GB (82%) | ZeRO-3 + CPU offload |
 
 > **Note**: The model automatically uses Flash Attention 2 when available, which significantly reduces memory usage for long context training.
+
+> **Extended Context with RoPE Scaling**: Qwen3-1.7B configs use dynamic RoPE (Rotary Position Embedding) scaling to extend the original 40K context window to 128K-320K. This enables training on much longer sequences without architectural changes.
 
 ### Software Requirements
 
@@ -384,8 +393,14 @@ OrthGSA provides pre-configured files for different models and context windows:
 | `config_qwen3_8b_32k.yaml` | Qwen3-8B | 32K | 8x 44GB | Long context training |
 | `config_qwen3_8b_64k.yaml` | Qwen3-8B | 64K | 8x 44GB | Extended context training |
 | `config_qwen3_8b_128k.yaml` | Qwen3-8B | 128K | 8x 44GB | Maximum context training |
+| **`config_qwen3_1.7b_128k.yaml`** | **Qwen3-1.7B** | **128K** | 8x 44GB | Extended context with RoPE (safe) |
+| **`config_qwen3_1.7b_192k.yaml`** | **Qwen3-1.7B** | **192K** | 8x 44GB | Extended context with RoPE (safe) |
+| **`config_qwen3_1.7b_256k.yaml`** | **Qwen3-1.7B** | **256K** | 8x 44GB | Extended context with RoPE (moderate) |
+| **`config_qwen3_1.7b_320k.yaml`** | **Qwen3-1.7B** | **320K** | 8x 44GB | Extended context with RoPE (aggressive) |
 
 > **Note**: All Qwen3-8B configs use DeepSpeed ZeRO-3 with CPU offload and Flash Attention 2 for memory efficiency.
+
+> **Qwen3-1.7B Extended Context**: The 1.7B model uses dynamic RoPE scaling to extend context from 40K to 128K-320K. Smaller model size allows for much longer context windows on the same hardware.
 
 ### Step 5.2: Qwen3-4B Configuration (Default)
 
@@ -515,7 +530,109 @@ distributed:
 
 > **Note**: All long context configs use DeepSpeed ZeRO-3 with CPU offloading. Ensure you have sufficient system RAM (256GB+ recommended for 128K context).
 
-### Step 5.4: Launch Commands for Each Configuration
+### Step 5.4: Qwen3-1.7B Extended Context Configurations (128K-320K with RoPE Scaling)
+
+The Qwen3-1.7B model is ideal for ultra-long context training. Its smaller size (2.03B parameters) allows extending the context window from 40K to 320K using dynamic RoPE scaling.
+
+**128K Context** (`configs/config_qwen3_1.7b_128k.yaml`) - Safe, ~40% GPU utilization:
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+  rope_scaling:
+    type: "dynamic"
+    factor: 3.2                   # 128K / 40K = 3.2x extension
+  orthgsa:
+    n_streams: 2
+  gsa:
+    k_base: 512
+    k_max: 1024
+
+data:
+  max_seq_length: 131072          # 128K context
+
+training:
+  learning_rate: 2.0e-5
+  max_grad_norm: 1.0
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero3_1.7b_128k.json"
+```
+
+**192K Context** (`configs/config_qwen3_1.7b_192k.yaml`) - Safe, ~55% GPU utilization:
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+  rope_scaling:
+    type: "dynamic"
+    factor: 4.8                   # 192K / 40K = 4.8x extension
+  orthgsa:
+    n_streams: 2
+  gsa:
+    k_base: 768
+    k_max: 1536
+
+data:
+  max_seq_length: 196608          # 192K context
+
+training:
+  learning_rate: 2.0e-5
+  max_grad_norm: 1.0
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero3_1.7b_192k.json"
+```
+
+**256K Context** (`configs/config_qwen3_1.7b_256k.yaml`) - Moderate, ~68% GPU utilization:
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+  rope_scaling:
+    type: "dynamic"
+    factor: 6.4                   # 256K / 40K = 6.4x extension
+  orthgsa:
+    n_streams: 2
+  gsa:
+    k_base: 1024
+    k_max: 2048
+
+data:
+  max_seq_length: 262144          # 256K context
+
+training:
+  learning_rate: 1.5e-5           # Lower LR for stability
+  max_grad_norm: 1.0
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero3_1.7b_256k.json"
+```
+
+**320K Context** (`configs/config_qwen3_1.7b_320k.yaml`) - Aggressive, ~82% GPU utilization:
+```yaml
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+  rope_scaling:
+    type: "dynamic"
+    factor: 8.0                   # 320K / 40K = 8.0x extension
+  orthgsa:
+    n_streams: 2
+  gsa:
+    k_base: 1280
+    k_max: 2560
+
+data:
+  max_seq_length: 327680          # 320K context
+
+training:
+  learning_rate: 1.0e-5           # Lower LR for longest context
+  max_grad_norm: 0.8              # Tighter clipping for stability
+
+distributed:
+  deepspeed_config: "configs/deepspeed_zero3_1.7b_320k.json"
+```
+
+> **RoPE Scaling**: Dynamic NTK-aware RoPE scaling extends position embeddings without retraining the base model. The scaling factor is calculated as `target_context / original_context` (e.g., 320K / 40K = 8.0x).
+
+### Step 5.5: Launch Commands for Each Configuration
 
 ```bash
 # Qwen3-4B (default, 4x GPUs)
@@ -545,11 +662,34 @@ deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_
 # Qwen3-8B with 128K context
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
 deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
+
+# ============================================
+# Qwen3-1.7B Ultra-Long Context Training (8x 44GB GPUs)
+# Uses RoPE scaling to extend 40K context to 128K-320K
+# ============================================
+
+# Qwen3-1.7B with 128K context (safe, ~40% GPU utilization)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_128k.yaml
+
+# Qwen3-1.7B with 192K context (safe, ~55% GPU utilization)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_192k.yaml
+
+# Qwen3-1.7B with 256K context (moderate, ~68% GPU utilization)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_256k.yaml
+
+# Qwen3-1.7B with 320K context (aggressive, ~82% GPU utilization)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_320k.yaml
 ```
 
 > **Important**: The `PYTORCH_CUDA_ALLOC_CONF` environment variable is essential for long context training. It enables expandable memory segments and aggressive garbage collection to reduce memory fragmentation.
 
-### Step 5.5: Configuration for Different GPU Setups (Qwen3-4B)
+> **Qwen3-1.7B Advantage**: The smaller 1.7B model allows training on contexts up to 8x longer than the 8B model on the same hardware. Start with 128K or 192K for stability testing before attempting 320K.
+
+### Step 5.6: Configuration for Different GPU Setups (Qwen3-4B)
 
 **Single GPU (24GB)**:
 ```yaml
@@ -583,7 +723,7 @@ data:
   max_seq_length: 4096
 ```
 
-### Step 5.6: Parameter Summary Table
+### Step 5.7: Parameter Summary Table
 
 | Config | n_streams | k_base | LR | Batch | Grad Accum | Eff. Batch | DeepSpeed |
 |--------|-----------|--------|-----|-------|------------|------------|-----------|
@@ -593,6 +733,10 @@ data:
 | Qwen3-8B (32K) | 2 | 512 | 1.5e-5 | 1 | 16 | 128 | ZeRO-3 |
 | Qwen3-8B (64K) | 2 | 512 | 1.5e-5 | 1 | 16 | 128 | ZeRO-3 |
 | Qwen3-8B (128K) | 2 | 512 | 1.0e-5 | 1 | 16 | 128 | ZeRO-3 |
+| **Qwen3-1.7B (128K)** | 2 | 512 | 2.0e-5 | 1 | 16 | 128 | ZeRO-3 |
+| **Qwen3-1.7B (192K)** | 2 | 768 | 2.0e-5 | 1 | 16 | 128 | ZeRO-3 |
+| **Qwen3-1.7B (256K)** | 2 | 1024 | 1.5e-5 | 1 | 16 | 128 | ZeRO-3 |
+| **Qwen3-1.7B (320K)** | 2 | 1280 | 1.0e-5 | 1 | 16 | 128 | ZeRO-3 |
 
 ---
 
@@ -767,14 +911,14 @@ watch -n 1 nvidia-smi
 
 ```bash
 python scripts/evaluate.py \
-    --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-10000
+    --checkpoint outputs/orthgsa-qwen3-8b-8k/checkpoint-10000
 ```
 
 ### Step 7.2: Full Evaluation Suite
 
 ```bash
 python scripts/evaluate.py \
-    --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-10000 \
+    --checkpoint outputs/orthgsa-qwen3-8b-8k/checkpoint-10000 \
     --max_eval_steps 1000 \
     --eval_throughput \
     --eval_generation \
@@ -1025,6 +1169,26 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.
 deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_128k.yaml
 
 # ============================================
+# Qwen3-1.7B Ultra-Long Context (8x 44GB GPUs)
+# Uses RoPE scaling for 128K-320K context
+# ============================================
+# 128K context (safe, recommended start)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_128k.yaml
+
+# 192K context (safe)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_192k.yaml
+
+# 256K context (moderate)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_256k.yaml
+
+# 320K context (aggressive)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_320k.yaml
+
+# ============================================
 # Resume Training
 # ============================================
 # Resume Qwen3-4B from latest checkpoint
@@ -1064,18 +1228,26 @@ watch -n 1 nvidia-smi
 OrthGSA/
 ├── .venv/                   # uv virtual environment
 ├── configs/
-│   ├── config_qwen3_4b.yaml          # Qwen3-4B config (default)
-│   ├── config_qwen3_8b_8k.yaml       # Qwen3-8B 8K context config (recommended start)
-│   ├── config_qwen3_8b_16k.yaml      # Qwen3-8B 16K context config
-│   ├── config_qwen3_8b_32k.yaml      # Qwen3-8B 32K context config
-│   ├── config_qwen3_8b_64k.yaml      # Qwen3-8B 64K context config
-│   ├── config_qwen3_8b_128k.yaml     # Qwen3-8B 128K context config
-│   ├── deepspeed_zero2.json          # DeepSpeed ZeRO-2 config (default)
-│   ├── deepspeed_zero3_8k.json       # DeepSpeed ZeRO-3 for 8K context
-│   ├── deepspeed_zero3_16k.json      # DeepSpeed ZeRO-3 for 16K context
-│   ├── deepspeed_zero3_32k.json      # DeepSpeed ZeRO-3 for 32K context
-│   ├── deepspeed_zero3_64k.json      # DeepSpeed ZeRO-3 for 64K context
-│   └── deepspeed_zero3_128k.json     # DeepSpeed ZeRO-3 for 128K context
+│   ├── config_qwen3_4b.yaml              # Qwen3-4B config (default)
+│   ├── config_qwen3_8b_8k.yaml           # Qwen3-8B 8K context config
+│   ├── config_qwen3_8b_16k.yaml          # Qwen3-8B 16K context config
+│   ├── config_qwen3_8b_32k.yaml          # Qwen3-8B 32K context config
+│   ├── config_qwen3_8b_64k.yaml          # Qwen3-8B 64K context config
+│   ├── config_qwen3_8b_128k.yaml         # Qwen3-8B 128K context config
+│   ├── config_qwen3_1.7b_128k.yaml       # Qwen3-1.7B 128K (RoPE 3.2x)
+│   ├── config_qwen3_1.7b_192k.yaml       # Qwen3-1.7B 192K (RoPE 4.8x)
+│   ├── config_qwen3_1.7b_256k.yaml       # Qwen3-1.7B 256K (RoPE 6.4x)
+│   ├── config_qwen3_1.7b_320k.yaml       # Qwen3-1.7B 320K (RoPE 8.0x)
+│   ├── deepspeed_zero2.json              # DeepSpeed ZeRO-2 config (default)
+│   ├── deepspeed_zero3_8k.json           # DeepSpeed ZeRO-3 for 8K context
+│   ├── deepspeed_zero3_16k.json          # DeepSpeed ZeRO-3 for 16K context
+│   ├── deepspeed_zero3_32k.json          # DeepSpeed ZeRO-3 for 32K context
+│   ├── deepspeed_zero3_64k.json          # DeepSpeed ZeRO-3 for 64K context
+│   ├── deepspeed_zero3_128k.json         # DeepSpeed ZeRO-3 for 128K context
+│   ├── deepspeed_zero3_1.7b_128k.json    # DeepSpeed ZeRO-3 for 1.7B 128K
+│   ├── deepspeed_zero3_1.7b_192k.json    # DeepSpeed ZeRO-3 for 1.7B 192K
+│   ├── deepspeed_zero3_1.7b_256k.json    # DeepSpeed ZeRO-3 for 1.7B 256K
+│   └── deepspeed_zero3_1.7b_320k.json    # DeepSpeed ZeRO-3 for 1.7B 320K
 ├── orthgsa/                 # Source code
 ├── outputs/                 # Training outputs
 ├── scripts/

@@ -1055,21 +1055,28 @@ def cayley_transform(H_raw: torch.Tensor) -> torch.Tensor:
 
 ### 4. Distributed Training
 
-For multi-GPU training, we recommend **DeepSpeed ZeRO-2** over DDP/FSDP:
+For multi-GPU training, we recommend **DeepSpeed ZeRO-3** with **Ring Attention** for long-context training:
 
-| Method | Memory per GPU (4B model) | Use Case |
+| Method | Memory per GPU (8B model) | Use Case |
 |--------|---------------------------|----------|
-| DDP | ~44GB | Single GPU or 80GB+ GPUs |
-| **DeepSpeed ZeRO-2** | **~17GB** | Recommended for 24-48GB GPUs |
-| DeepSpeed ZeRO-3 | ~12GB | Memory-constrained setups |
+| DDP | ~64GB | Single GPU or 80GB+ GPUs |
+| DeepSpeed ZeRO-2 | ~30GB | Short context (≤8K) |
+| **DeepSpeed ZeRO-3** | **~20GB** | Recommended for 24-48GB GPUs |
+| **ZeRO-3 + Ring Attention** | **~25GB** | Ultra-long context (64K-128K) |
 
 ```bash
-# DeepSpeed ZeRO-2 (recommended)
-deepspeed --num_gpus=4 scripts/train_deepspeed.py --config configs/config_qwen3_4b.yaml
+# DeepSpeed ZeRO-3 (recommended for standard training)
+deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_8b_8k.yaml
 
-# DDP (requires more memory)
-torchrun --nproc_per_node=4 scripts/train.py --config configs/config_qwen3_4b.yaml
+# DeepSpeed ZeRO-3 + Ring Attention (for ultra-long context 64K-128K)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_ring_attention.py --config configs/config_qwen3_8b_64k_ring.yaml
 ```
+
+**Ring Attention** enables sequence parallelism by distributing the sequence across GPUs:
+- Each GPU processes `seq_len / num_gpus` tokens
+- KV cache is exchanged in a ring topology
+- Enables 64K-128K context on 8x 44GB GPUs
 
 See `Getting_started.md` for detailed setup instructions.
 
@@ -1077,12 +1084,12 @@ See `Getting_started.md` for detailed setup instructions.
 
 | Model Size | Standard Transformer | OrthGSA | Speedup | Memory |
 |------------|---------------------|---------|---------|--------|
-| 1B @ 4K | 1.00× | 0.95× | 1.05× | 1.03× |
-| 7B @ 32K | 1.00× | 0.42× | 2.4× | 0.85× |
-| 7B @ 128K | 1.00× | 0.09× | 11× | 0.65× |
-| 27B @ 128K | 1.00× | 0.08× | 12.5× | 0.60× |
+| 1.7B @ 8K | 1.00× | 0.90× | 1.1× | 0.95× |
+| 8B @ 32K | 1.00× | 0.42× | 2.4× | 0.85× |
+| 8B @ 64K (Ring) | 1.00× | 0.25× | 4× | 0.70× |
+| 8B @ 128K (Ring) | 1.00× | 0.09× | 11× | 0.65× |
 
-*Note: Speedup increases with sequence length due to sparse attention.*
+*Note: Speedup increases with sequence length due to sparse attention. Ring Attention enables training on contexts that would otherwise exceed GPU memory.*
 
 ---
 

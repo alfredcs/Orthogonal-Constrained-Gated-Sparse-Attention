@@ -14,6 +14,7 @@ For single GPU:
 
 import os
 import sys
+import json
 import argparse
 import logging
 import math
@@ -102,9 +103,11 @@ def evaluate(
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
+            # Don't pass attention_mask for packed sequences - avoids creating
+            # massive [seq_len x seq_len] mask. SDPA uses efficient causal masking internally.
             outputs = model_engine(
                 input_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"],
+                attention_mask=None,  # Let SDPA handle causal masking efficiently
                 labels=batch["labels"],
             )
 
@@ -119,6 +122,48 @@ def evaluate(
         "eval_loss": avg_loss,
         "perplexity": perplexity,
     }
+
+
+def save_hf_checkpoint(
+    model_engine,
+    model: OrthGSAForCausalLM,
+    save_dir: str,
+    rank: int,
+    orthgsa_config: OrthGSAConfig,
+):
+    """Save checkpoint in HuggingFace-compatible format for evaluation.
+
+    This saves alongside the DeepSpeed checkpoint to enable easy loading
+    with OrthGSAForCausalLM.from_pretrained().
+    """
+    hf_save_dir = os.path.join(save_dir, "hf_model")
+    os.makedirs(hf_save_dir, exist_ok=True)
+
+    # Save full 16-bit model (only rank 0 actually writes)
+    model_engine.save_16bit_model(hf_save_dir, save_filename="model.safetensors")
+
+    # Only rank 0 saves config and orthgsa weights
+    if rank == 0:
+        # Save config.json with orthgsa config included
+        config_dict = model.config.to_dict()
+        config_dict['orthgsa'] = orthgsa_config.to_dict()
+        with open(os.path.join(hf_save_dir, 'config.json'), 'w') as f:
+            json.dump(config_dict, f, indent=2)
+
+        # Save OrthGSA-specific weights
+        # Need to gather from model (may be sharded across GPUs with ZeRO-3)
+        with deepspeed.zero.GatheredParameters(
+            list(model.mhc_modules.parameters()) + [model.expand_streams, model.collapse_streams],
+            modifier_rank=0
+        ):
+            orthgsa_state = {
+                'mhc_modules': model.mhc_modules.state_dict(),
+                'expand_streams': model.expand_streams.data.clone(),
+                'collapse_streams': model.collapse_streams.data.clone(),
+            }
+            torch.save(orthgsa_state, os.path.join(hf_save_dir, 'orthgsa_weights.pt'))
+
+        logger.info(f"HuggingFace-compatible checkpoint saved to {hf_save_dir}")
 
 
 def main():
@@ -176,19 +221,35 @@ def main():
         adaptive_k=model_config["gsa"]["adaptive_k"],
     )
 
-    # Create model - load on CPU first to avoid GPU OOM during initialization
-    logger.info(f"Loading model: {model_config['base_model']}")
+    # Get data config and RoPE scaling config
+    data_config = config["data"]
+    rope_scaling = model_config.get("rope_scaling")
+    max_position_embeddings = data_config.get("max_seq_length")
+
+    # Load DeepSpeed config first to check if we need ZeRO-3 init context
+    distributed_config = config.get("distributed", {})
+    ds_config_path = distributed_config.get("deepspeed_config")
+
+    if ds_config_path and not os.path.isabs(ds_config_path):
+        project_root = Path(__file__).parent.parent
+        ds_config_path = str(project_root / ds_config_path)
 
     # Clear CUDA cache before loading
     torch.cuda.empty_cache()
 
-    # Load model on CPU first, DeepSpeed will handle sharding during initialize()
+    logger.info(f"Loading model: {model_config['base_model']}")
+
+    # Load model on CPU first - deepspeed.initialize() will handle ZeRO-3 partitioning
+    # Note: deepspeed.zero.Init() context doesn't work well with transformers from_pretrained
+    # because transformers uses meta tensors internally during model creation
     model = OrthGSAForCausalLM(
         base_model_name=model_config["base_model"],
         orthgsa_config=orthgsa_cfg,
         torch_dtype=torch.bfloat16 if config["training"]["bf16"] else torch.float32,
-        device_map="cpu",  # Load on CPU first
+        device_map="cpu",  # Load on CPU, DeepSpeed will partition during initialize()
         low_cpu_mem_usage=True,
+        max_position_embeddings=max_position_embeddings,
+        rope_scaling=rope_scaling,
     )
 
     # Log parameter counts
@@ -203,7 +264,6 @@ def main():
 
     # Create data loaders
     training_config = config["training"]
-    data_config = config["data"]
     dataset_name = data_config.get("dataset", "cerebras/SlimPajama-627B")
     local_path = data_config.get("local_path")
     dataset_path = data_config.get("dataset_path")  # S3 path or explicit dataset path
@@ -241,19 +301,11 @@ def main():
             dataset_path=dataset_path,
         )
 
-    # DeepSpeed config - load from external file if specified, otherwise use defaults
-    distributed_config = config.get("distributed", {})
-    ds_config_path = distributed_config.get("deepspeed_config")
-
-    # Resolve relative path from project root
-    if ds_config_path and not os.path.isabs(ds_config_path):
-        project_root = Path(__file__).parent.parent
-        ds_config_path = str(project_root / ds_config_path)
-
+    # DeepSpeed config - reuse path resolved earlier, load config for DeepSpeed.initialize()
+    # ds_config_path was already resolved above when checking for ZeRO-3
     if ds_config_path and os.path.exists(ds_config_path):
         # Load external DeepSpeed config
         logger.info(f"Loading DeepSpeed config from: {ds_config_path}")
-        import json
         with open(ds_config_path, "r") as f:
             ds_config = json.load(f)
 
@@ -345,6 +397,97 @@ def main():
         gpu_mem = get_gpu_memory_info()
         logger.info(f"GPU memory before training: {gpu_mem.get('allocated_gb', 0):.2f}GB allocated, {gpu_mem.get('reserved_gb', 0):.2f}GB reserved")
 
+    # ========================================================================
+    # CUDA WARMUP PASS - Pre-allocate memory with small sequences first
+    # This prevents OOM from memory spike when first processing full context
+    # ========================================================================
+    warmup_seq_lengths = [1024, 4096, 16384, 32768]  # Gradually increase
+    target_seq_length = data_config["max_seq_length"]
+
+    # Only do warmup if target sequence is long (>32K)
+    if target_seq_length > 32768:
+        logger.info(f"Running CUDA warmup pass to pre-allocate memory for {target_seq_length} context...")
+        model_engine.train()
+
+        for warmup_len in warmup_seq_lengths:
+            if warmup_len >= target_seq_length:
+                break
+
+            try:
+                # Create dummy batch for warmup
+                dummy_input = torch.randint(
+                    0, tokenizer.vocab_size,
+                    (1, warmup_len),
+                    device=device,
+                    dtype=torch.long
+                )
+                dummy_labels = dummy_input.clone()
+
+                if rank == 0:
+                    logger.info(f"  Warmup forward pass with seq_len={warmup_len}...")
+
+                # Forward pass only (no backward to avoid optimizer state allocation)
+                with torch.no_grad():
+                    outputs = model_engine(
+                        input_ids=dummy_input,
+                        attention_mask=None,
+                        labels=dummy_labels,
+                    )
+
+                del outputs, dummy_input, dummy_labels
+                torch.cuda.empty_cache()
+
+                if rank == 0:
+                    gpu_mem = get_gpu_memory_info()
+                    logger.info(f"    Memory after warmup {warmup_len}: {gpu_mem.get('allocated_gb', 0):.2f}GB allocated")
+
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    logger.warning(f"  Warmup OOM at seq_len={warmup_len}, clearing cache and continuing...")
+                    torch.cuda.empty_cache()
+                else:
+                    raise
+
+        # Final warmup at ~75% of target length to prime memory allocator
+        warmup_final_len = min(int(target_seq_length * 0.75), target_seq_length - 1024)
+        try:
+            if rank == 0:
+                logger.info(f"  Final warmup forward pass with seq_len={warmup_final_len}...")
+
+            dummy_input = torch.randint(
+                0, tokenizer.vocab_size,
+                (1, warmup_final_len),
+                device=device,
+                dtype=torch.long
+            )
+            dummy_labels = dummy_input.clone()
+
+            with torch.no_grad():
+                outputs = model_engine(
+                    input_ids=dummy_input,
+                    attention_mask=None,
+                    labels=dummy_labels,
+                )
+
+            del outputs, dummy_input, dummy_labels
+
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                logger.warning(f"  Final warmup OOM at seq_len={warmup_final_len}, this may indicate insufficient memory for target length")
+            else:
+                raise
+
+        # Synchronize and clear cache before real training
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        torch.cuda.empty_cache()
+
+        if rank == 0:
+            gpu_mem = get_gpu_memory_info()
+            logger.info(f"Warmup complete. Memory: {gpu_mem.get('allocated_gb', 0):.2f}GB allocated, {gpu_mem.get('reserved_gb', 0):.2f}GB reserved")
+
+    # ========================================================================
+
     # Training loop
     logger.info("Starting training...")
 
@@ -375,13 +518,30 @@ def main():
             train_iterator = iter(train_dataloader)
             batch = next(train_iterator)
 
+        # SAFETY CHECK: Validate and truncate batch if needed
+        # This catches any sequences that slip through the dataloader
+        max_seq_len = data_config["max_seq_length"]
+        batch_seq_len = batch["input_ids"].shape[1]
+        if batch_seq_len > max_seq_len:
+            logger.warning(
+                f"Batch seq_len {batch_seq_len} exceeds max_seq_length {max_seq_len}. "
+                f"Truncating to prevent OOM. Check dataloader configuration."
+            )
+            batch["input_ids"] = batch["input_ids"][:, :max_seq_len]
+            batch["labels"] = batch["labels"][:, :max_seq_len]
+            if "attention_mask" in batch:
+                batch["attention_mask"] = batch["attention_mask"][:, :max_seq_len]
+
         # Move batch to device
         batch = {k: v.to(device) for k, v in batch.items()}
 
         # Forward pass
+        # Don't pass attention_mask for packed sequences - avoids creating
+        # massive [seq_len x seq_len] mask (8GB+ for 64K context!)
+        # SDPA/Flash Attention uses efficient causal masking internally.
         outputs = model_engine(
             input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
+            attention_mask=None,  # Let SDPA handle causal masking efficiently
             labels=batch["labels"],
         )
         loss = outputs.loss
@@ -441,6 +601,8 @@ def main():
                 checkpoint_dir = os.path.join(output_dir, f"checkpoint-{global_step}")
                 model_engine.save_checkpoint(checkpoint_dir)
                 logger.info(f"Checkpoint saved to {checkpoint_dir}")
+                # Also save HuggingFace-compatible checkpoint for evaluation
+                save_hf_checkpoint(model_engine, model, checkpoint_dir, rank, orthgsa_cfg)
 
     progress_bar.close()
 
@@ -448,6 +610,8 @@ def main():
     final_checkpoint_dir = os.path.join(output_dir, f"checkpoint-{global_step}")
     model_engine.save_checkpoint(final_checkpoint_dir)
     logger.info(f"Final checkpoint saved to {final_checkpoint_dir}")
+    # Also save HuggingFace-compatible checkpoint for evaluation
+    save_hf_checkpoint(model_engine, model, final_checkpoint_dir, rank, orthgsa_cfg)
 
     # Cleanup
     if wandb_run is not None:

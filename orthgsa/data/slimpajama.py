@@ -134,22 +134,24 @@ def _list_s3_files(bucket: str, prefix: str, extensions: List[str]) -> List[str]
 def _stream_s3_jsonl_zst(bucket: str, key: str, max_retries: int = 3) -> Generator[Dict, None, None]:
     """Stream and decompress a .jsonl.zst file from S3 with retry logic."""
     import zstandard as zstd
+    import io
 
     # Download entire file with retry logic (more reliable than streaming for unstable connections)
     data = _download_s3_file_with_retry(bucket, key, max_retries=max_retries)
 
-    # Create zstd decompressor
+    # Create zstd decompressor - use streaming mode to handle files without content size in header
     dctx = zstd.ZstdDecompressor()
 
-    # Decompress and parse JSONL
-    decompressed = dctx.decompress(data)
-    for line in decompressed.decode("utf-8").split("\n"):
-        line = line.strip()
-        if line:
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    # Use stream_reader which handles files without content size in frame header
+    with dctx.stream_reader(io.BytesIO(data)) as reader:
+        text_stream = io.TextIOWrapper(reader, encoding='utf-8')
+        for line in text_stream:
+            line = line.strip()
+            if line:
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
 
 def _stream_s3_jsonl(bucket: str, key: str, max_retries: int = 3) -> Generator[Dict, None, None]:
@@ -169,12 +171,15 @@ def _stream_s3_jsonl(bucket: str, key: str, max_retries: int = 3) -> Generator[D
 def _stream_s3_json_zst(bucket: str, key: str, max_retries: int = 3) -> Generator[Dict, None, None]:
     """Stream and decompress a .json.zst file from S3 with retry logic."""
     import zstandard as zstd
+    import io
 
     # Download entire file with retry logic
     data = _download_s3_file_with_retry(bucket, key, max_retries=max_retries)
 
+    # Use streaming decompression to handle files without content size in frame header
     dctx = zstd.ZstdDecompressor()
-    decompressed = dctx.decompress(data)
+    with dctx.stream_reader(io.BytesIO(data)) as reader:
+        decompressed = reader.read()
 
     try:
         # Try as JSON array
@@ -341,14 +346,27 @@ class DataCollatorForLanguageModeling:
         else:
             input_ids = examples
 
-        # Find max length in batch
+        # HARD TRUNCATION FIRST - ensure no sequence exceeds max_length
+        # This is critical for long-context training to prevent OOM
+        truncated_input_ids = []
+        for ids in input_ids:
+            if len(ids) > self.max_length:
+                logger.warning(
+                    f"Collator received sequence of {len(ids)} tokens, "
+                    f"truncating to {self.max_length}. This should not happen with packed dataset."
+                )
+                ids = ids[:self.max_length]
+            truncated_input_ids.append(ids)
+        input_ids = truncated_input_ids
+
+        # Find max length in batch (now guaranteed <= max_length)
         max_len = max(len(ids) for ids in input_ids)
 
         # Pad to multiple of pad_to_multiple_of
         if self.pad_to_multiple_of:
             max_len = ((max_len + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of) * self.pad_to_multiple_of
 
-        # Clip to max_length
+        # Ensure we don't exceed max_length after padding alignment
         max_len = min(max_len, self.max_length)
 
         # Pad sequences
@@ -361,8 +379,8 @@ class DataCollatorForLanguageModeling:
             pad_token_id = self.tokenizer.eos_token_id
 
         for ids in input_ids:
-            # Truncate if needed
-            ids = ids[:max_len]
+            # Truncate if needed (should already be done, but be safe)
+            ids = list(ids[:max_len])
 
             # Calculate padding
             padding_length = max_len - len(ids)
@@ -553,7 +571,7 @@ class PackedSlimPajamaDataset(IterableDataset):
             if not text:
                 continue
 
-            # Tokenize
+            # Tokenize - no truncation here, we chunk manually below
             tokens = self.tokenizer(
                 text,
                 truncation=False,
@@ -565,10 +583,12 @@ class PackedSlimPajamaDataset(IterableDataset):
             token_buffer.extend(tokens)
             token_buffer.append(self.eos_token_id)
 
-            # Yield full chunks
+            # Yield full chunks - ALWAYS exactly max_length tokens
             while len(token_buffer) >= self.max_length:
                 chunk = token_buffer[:self.max_length]
                 token_buffer = token_buffer[self.max_length:]
+                # Defensive check - should always be true
+                assert len(chunk) == self.max_length, f"Chunk size {len(chunk)} != {self.max_length}"
                 yield {"input_ids": chunk}
 
 

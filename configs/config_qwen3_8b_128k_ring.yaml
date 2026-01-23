@@ -1,0 +1,118 @@
+# OrthGSA Training Configuration for Qwen3-8B with Ring Attention
+# Target: 8x 44GB GPUs, 128K context window with SEQUENCE PARALLELISM
+#
+# Memory Analysis for Qwen3-8B (~8B params) with 128K context:
+# - Model params: ~16GB (sharded with ZeRO-3 + CPU offload)
+# - With Ring Attention: Each GPU processes 128K/8 = 16K tokens
+# - Activations per GPU: ~15-20GB (with gradient checkpointing)
+# - Total per GPU: ~25-35GB → fits in 44GB
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-8B"
+
+  # RoPE scaling for extended context
+  # Qwen3-8B has max_position_embeddings of 40960 (40K)
+  # For 128K context: 128K / 40K = 3.2x
+  rope_scaling:
+    type: "dynamic"
+    factor: 3.2
+
+  # OrthGSA-specific parameters - reduced for larger model + longer context
+  orthgsa:
+    n_streams: 2                    # Keep low for memory
+    alpha_init: 0.01
+    cayley_scaling: 0.1
+
+  # GSA parameters - adjusted for 128K context
+  gsa:
+    enabled: true
+    k_base: 1024                    # Increased for longer context
+    k_min: 256
+    k_max: 2048
+    indexer_heads: 4
+    indexer_dim: 64
+    adaptive_k: true
+    gate_bias_init: 0.5
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"
+  max_seq_length: 131072            # 128K context window
+  num_workers: 2
+  streaming: true
+
+# Training Configuration
+training:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 64   # Higher for 128K context, effective batch = 512
+
+  learning_rate: 5.0e-6             # Lower LR for longer context training
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  max_steps: 1000 # was 2000
+  eval_steps: 250
+  save_steps: 500
+  logging_steps: 10
+
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+
+  optim: "adamw_torch_fused"
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration with Sequence Parallelism
+distributed:
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero3_8b_128k_ring.json"
+
+  # SEQUENCE PARALLELISM via Ring Attention
+  sequence_parallel:
+    enabled: true
+    degree: 8                       # Number of GPUs for sequence splitting
+    chunk_size: 16384               # Each GPU processes 128K/8 = 16K tokens
+
+# Memory Optimization
+memory:
+  target_memory_utilization: 0.90   # Can push higher with ring attention
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+  use_flash_attention: true
+  auto_find_batch_size: false
+
+# Logging Configuration
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-8b"
+    entity: null
+    run_name: "qwen3-8b-128k-ring-attention"
+    tags: ["orthgsa", "qwen3-8b", "slimpajama", "128k-context", "ring-attention", "sequence-parallel"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-8b-128k-ring"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 3
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation
+evaluation:
+  do_eval: true
+  eval_strategy: "steps"
+  per_device_eval_batch_size: 1
+  eval_accumulation_steps: 8        # More accumulation for longer sequences
+
+seed: 42

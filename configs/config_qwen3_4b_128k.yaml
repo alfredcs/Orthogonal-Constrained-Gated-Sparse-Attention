@@ -1,0 +1,105 @@
+# OrthGSA Training Configuration for Qwen3-4B-Instruct on SlimPajama-627B
+# Target: 8x 44GB GPUs, 128K context window (EXTREME OPTIMIZATION)
+# Memory estimate: ~38-42GB per GPU with all optimizations enabled
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-4B-Instruct-2507"
+
+  # OrthGSA-specific parameters - MINIMAL for memory
+  orthgsa:
+    n_streams: 1                    # Minimum streams to save memory
+    alpha_init: 0.01                # Initial scaling for orthogonal HC coefficients
+    cayley_scaling: 0.1             # Scaling for Cayley transform input
+
+  # GSA parameters - tuned for 128K context
+  gsa:
+    enabled: true
+    k_base: 256                     # Conservative for 128K context
+    k_min: 64                       # Minimum k
+    k_max: 512                      # Maximum k (reduced for memory)
+    indexer_heads: 2                # Reduced indexer heads
+    indexer_dim: 32                 # Reduced indexer dimension
+    adaptive_k: true                # Enable adaptive k selection
+    gate_bias_init: 0.5             # Initial gate bias
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"
+  max_seq_length: 131072            # 128K context window
+  num_workers: 0                    # Disable multiprocessing to save memory
+  streaming: true
+
+# Training Configuration
+training:
+  per_device_train_batch_size: 1    # Cannot reduce further
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8    # Reduced for memory (effective batch = 64)
+
+  # Learning rate - lower for stability with extreme context
+  learning_rate: 8.0e-6             # Very conservative LR
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05                # Longer warmup for stability
+  weight_decay: 0.1
+  max_grad_norm: 0.5                # Tighter gradient clipping
+
+  # Training duration
+  max_steps: 2000
+  eval_steps: 500
+  save_steps: 500
+  logging_steps: 10
+
+  # Precision and optimization
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true      # CRITICAL for 128K
+
+  # Optimizer
+  optim: "adamw_torch_fused"
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration
+distributed:
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero3_4b_128k.json"
+
+# Memory Optimization - EXTREME
+memory:
+  target_memory_utilization: 0.92   # Push memory utilization high
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+  use_flash_attention: true         # CRITICAL - reduces attention from 1TB to 0.1GB
+  auto_find_batch_size: false
+
+# Logging Configuration
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-4b"
+    entity: null
+    run_name: "qwen3-4b-128k-extreme"
+    tags: ["orthgsa", "qwen3-4b", "slimpajama", "128k-context", "extreme-optimization"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-4b-128k"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 2               # Reduce to save disk space
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation
+evaluation:
+  do_eval: false                    # Disable during training to save memory
+  eval_strategy: "steps"
+  per_device_eval_batch_size: 1
+  eval_accumulation_steps: 8
+
+# Seed for reproducibility
+seed: 42

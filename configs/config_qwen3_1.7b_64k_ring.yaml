@@ -1,0 +1,117 @@
+# OrthGSA Training Configuration for Qwen3-1.7B with Ring Attention
+# Target: 8x 44GB GPUs, 64K context window with SEQUENCE PARALLELISM
+#
+# Memory Analysis:
+# - Without Ring Attention: Each GPU processes 64K tokens → OOM
+# - With Ring Attention: Each GPU processes 64K/8 = 8K tokens → ~5-8GB activations
+#
+# This config leverages the TOTAL 350GB GPU memory pool across all 8 GPUs
+
+# Model Configuration
+model:
+  base_model: "/home/alfred/models/Qwen3-1.7B"
+
+  # RoPE scaling for extended context (64K / 40K = 1.6x)
+  rope_scaling:
+    type: "dynamic"
+    factor: 1.6
+
+  # OrthGSA-specific parameters
+  orthgsa:
+    n_streams: 2
+    alpha_init: 0.01
+    cayley_scaling: 0.1
+
+  # GSA parameters
+  gsa:
+    enabled: true
+    k_base: 512
+    k_min: 128
+    k_max: 1024
+    indexer_heads: 4
+    indexer_dim: 64
+    adaptive_k: true
+    gate_bias_init: 0.5
+
+# Data Configuration
+data:
+  dataset: "cerebras/SlimPajama-627B"
+  dataset_path: "s3://public-datasets-multimodality/SlimPajama-627B/"
+  max_seq_length: 65536             # 64K context window (will be split across GPUs)
+  num_workers: 2
+  streaming: true
+
+# Training Configuration
+training:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16   # Effective batch = 128
+
+  learning_rate: 2.0e-5
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  max_steps: 2000
+  eval_steps: 250
+  save_steps: 500
+  logging_steps: 10
+
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+
+  optim: "adamw_torch_fused"
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+# Distributed Training Configuration with Sequence Parallelism
+distributed:
+  strategy: "deepspeed"
+  deepspeed_config: "configs/deepspeed_zero3_1.7b_64k.json"
+
+  # SEQUENCE PARALLELISM via Ring Attention
+  # This distributes the sequence dimension across GPUs
+  sequence_parallel:
+    enabled: true
+    degree: 8                       # Number of GPUs for sequence splitting (= world_size)
+    chunk_size: 8192                # Each GPU processes 64K/8 = 8K tokens
+
+# Memory Optimization
+memory:
+  target_memory_utilization: 0.85   # Can use more memory now!
+  activation_checkpointing: true
+  checkpoint_layers: "all"
+  use_flash_attention: true
+  auto_find_batch_size: false
+
+# Logging Configuration
+logging:
+  wandb:
+    enabled: true
+    project: "orthgsa-qwen3-1.7b"
+    entity: null
+    run_name: "qwen3-1.7b-64k-ring-attention"
+    tags: ["orthgsa", "qwen3-1.7b", "slimpajama", "64k-context", "ring-attention", "sequence-parallel"]
+    log_model: false
+
+  output_dir: "./outputs/orthgsa-qwen3-1.7b-64k-ring"
+  logging_dir: "./logs"
+  report_to: ["wandb", "tensorboard"]
+
+# Checkpointing
+checkpointing:
+  save_total_limit: 3
+  save_on_each_node: false
+  resume_from_checkpoint: null
+
+# Evaluation
+evaluation:
+  do_eval: true
+  eval_strategy: "steps"
+  per_device_eval_batch_size: 1
+  eval_accumulation_steps: 4
+
+seed: 42

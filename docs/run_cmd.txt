@@ -1,0 +1,180 @@
+Run Commands:
+
+  # 64K Context - SAFE
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+  deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_4b_64k.yaml
+
+  # 96K Context - MODERATE (recommended middle ground)
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+  deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_4b_96k.yaml
+
+  # 128K Context - EXTREME
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6,max_split_size_mb:128 \
+  deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_4b_128k.yaml
+
+  With S3 Caching (for unstable connections):
+
+  # Add these environment variables for S3 caching
+  S3_USE_CACHE=true \
+  S3_CACHE_DIR=/path/to/local/cache \
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
+  deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_4b_96k.yaml
+
+  Key Differences Between Configs:
+  ┌───────────────┬────────┬────────┬────────┐
+  │    Setting    │  64K   │  96K   │  128K  │
+  ├───────────────┼────────┼────────┼────────┤
+  │ n_streams     │ 2      │ 1      │ 1      │
+  ├───────────────┼────────┼────────┼────────┤
+  │ k_max         │ 1024   │ 768    │ 512    │
+  ├───────────────┼────────┼────────┼────────┤
+  │ grad_accum    │ 16     │ 12     │ 8      │
+  ├───────────────┼────────┼────────┼────────┤
+  │ learning_rate │ 1.2e-5 │ 1.0e-5 │ 8.0e-6 │
+  ├───────────────┼────────┼────────┼────────┤
+  │ max_grad_norm │ 1.0    │ 0.8    │ 0.5    │
+  ├───────────────┼────────┼────────┼────────┤
+  │ overlap_comm  │ true   │ false  │ false  │
+  ├───────────────┼────────┼────────┼────────┤
+  │ do_eval       │ true   │ false  │ false  │
+  └───────────────┴────────┴────────┴────────┘
+  Recommended Approach:
+  1. Start with 64K to verify setup works
+  2. Try 96K for production training
+  3. Use 128K only if you specifically need it
+
+● All Qwen3-1.7B configurations have been created. Here's a summary:
+
+  Training Configs (YAML):
+  ┌─────────────────────────────┬─────────┬─────────────┬─────────────────┬────────────┐
+  │           Config            │ Context │ RoPE Factor │ Est. Memory/GPU │ Risk Level │
+  ├─────────────────────────────┼─────────┼─────────────┼─────────────────┼────────────┤
+  │ config_qwen3_1.7b_128k.yaml │ 128K    │ 3.2x        │ ~18GB (40%)     │ Safe       │
+  ├─────────────────────────────┼─────────┼─────────────┼─────────────────┼────────────┤
+  │ config_qwen3_1.7b_192k.yaml │ 192K    │ 4.8x        │ ~24GB (55%)     │ Safe       │
+  ├─────────────────────────────┼─────────┼─────────────┼─────────────────┼────────────┤
+  │ config_qwen3_1.7b_256k.yaml │ 256K    │ 6.4x        │ ~30GB (68%)     │ Moderate   │
+  ├─────────────────────────────┼─────────┼─────────────┼─────────────────┼────────────┤
+  │ config_qwen3_1.7b_320k.yaml │ 320K    │ 8.0x        │ ~36GB (82%)     │ Aggressive │
+  └─────────────────────────────┴─────────┴─────────────┴─────────────────┴────────────┘
+  DeepSpeed Configs (JSON):
+  - deepspeed_zero3_1.7b_128k.json - overlap_comm enabled, no CPU checkpointing
+  - deepspeed_zero3_1.7b_192k.json - overlap_comm enabled, no CPU checkpointing
+  - deepspeed_zero3_1.7b_256k.json - overlap_comm disabled, CPU checkpointing enabled
+  - deepspeed_zero3_1.7b_320k.json - overlap_comm disabled, CPU checkpointing, tighter gradient clipping (0.8)
+
+  Launch Commands:
+  # 128K context (safest)
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_128k.yaml
+
+  # 192K context
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_192k.yaml
+
+  # 256K context
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_256k.yaml
+
+  # 320K context (most aggressive)
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_320k.yaml
+
+  I also fixed a bug in train_deepspeed.py where data_config was referenced before being defined when using RoPE scaling.
+
+  1. Created a conversion script for your existing checkpoint
+
+  Run this to convert your checkpoint:
+
+  python scripts/convert_deepspeed_checkpoint.py \
+      --checkpoint outputs/orthgsa-qwen3-8b-8k/checkpoint-1000 \
+      --config configs/config_qwen3_8b_8k.yaml
+
+  Then evaluate with:
+
+  python scripts/evaluate.py --checkpoint outputs/orthgsa-qwen3-8b-8k/checkpoint-1000/hf_model
+
+  2. Updated train_deepspeed.py to save HuggingFace-compatible checkpoints
+
+  Future training runs will automatically save checkpoints in both formats:
+  - checkpoint-N/ - DeepSpeed format (for resuming training)
+  - checkpoint-N/hf_model/ - HuggingFace format (for evaluation)
+
+  The key changes in scripts/train_deepspeed.py:
+  - Added save_hf_checkpoint() function (lines 124-165)
+  - Called it after each checkpoint save (lines 494-495 and 503-504)
+
+
+2026-01-20 21:36:15 - INFO - __main__ - Converted weights saved to outputs/orthgsa-qwen3-8b-8k/checkpoint-1000/hf_model/_temp_converted
+2026-01-20 21:36:15 - INFO - __main__ - Extracting OrthGSA-specific weights...
+2026-01-20 21:36:15 - INFO - __main__ - Loading shard: pytorch_model-00001-of-00007.bin
+2026-01-20 21:36:17 - INFO - __main__ - Loading shard: pytorch_model-00002-of-00007.bin
+2026-01-20 21:36:20 - INFO - __main__ - Loading shard: pytorch_model-00003-of-00007.bin
+2026-01-20 21:36:22 - INFO - __main__ - Loading shard: pytorch_model-00004-of-00007.bin
+2026-01-20 21:36:25 - INFO - __main__ - Loading shard: pytorch_model-00005-of-00007.bin
+2026-01-20 21:36:27 - INFO - __main__ - Loading shard: pytorch_model-00006-of-00007.bin
+2026-01-20 21:36:29 - INFO - __main__ - Loading shard: pytorch_model-00007-of-00007.bin
+2026-01-20 21:36:32 - INFO - __main__ - OrthGSA weights saved to outputs/orthgsa-qwen3-8b-8k/checkpoint-1000/hf_model/orthgsa_weights.pt
+2026-01-20 21:36:32 - INFO - __main__ - Saving base model weights...
+2026-01-20 21:44:34 - INFO - __main__ - Base model weights saved to outputs/orthgsa-qwen3-8b-8k/checkpoint-1000/hf_model/model.safetensors
+2026-01-20 21:44:44 - INFO - __main__ - Creating config.json...
+2026-01-20 21:44:44 - INFO - __main__ - Config saved to outputs/orthgsa-qwen3-8b-8k/checkpoint-1000/hf_model/config.json
+2026-01-20 21:44:44 - INFO - __main__ - Conversion complete!
+2026-01-20 21:44:44 - INFO - __main__ - 
+To evaluate, run:
+2026-01-20 21:44:44 - INFO -
+
+python scripts/evaluate.py --checkpoint outputs/orthgsa-qwen3-8b-8k/checkpoint-1000/hf_model
+
+
+  Summary: Distributed Options for Long-Context Training
+
+  Memory Breakdown (64K context, 1.7B model, bf16)
+  ┌──────────────┬────────────────────────────────┬──────────────────────────────────────┐
+  │  Component   │   Per-GPU Memory (Standard)    │ Per-GPU with Ring Attention (8 GPUs) │
+  ├──────────────┼────────────────────────────────┼──────────────────────────────────────┤
+  │ Model Params │ ~3.4GB (sharded with ZeRO-3)   │ ~3.4GB                               │
+  ├──────────────┼────────────────────────────────┼──────────────────────────────────────┤
+  │ Activations  │ ~40GB (64K × 2048 × 28 layers) │ ~5GB (8K × 2048 × 28 layers)         │
+  ├──────────────┼────────────────────────────────┼──────────────────────────────────────┤
+  │ Gradients    │ ~3.4GB (sharded)               │ ~3.4GB                               │
+  ├──────────────┼────────────────────────────────┼──────────────────────────────────────┤
+  │ Optimizer    │ ~6.8GB (sharded, CPU offload)  │ ~6.8GB                               │
+  ├──────────────┼────────────────────────────────┼──────────────────────────────────────┤
+  │ Total        │ ~54GB (OOM!)                   │ ~19GB ✓                              │
+  └──────────────┴────────────────────────────────┴──────────────────────────────────────┘
+  Your Options (Ranked by Ease of Implementation)
+
+  Option 1: Fix the Dataloader (Already Done!) + Reduce Context (OOM 🚫)
+
+  The truncation fixes I made should allow training. Try:
+  # Try 32K first to confirm it works
+  # Edit config: max_seq_length: 32768
+  PYTORCH_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_64k.yaml
+
+  Option 2: DeepSpeed Ulysses (Sequence Parallelism) (OOM 🚫)
+
+  Add "sequence_parallel_size": 8 to your DeepSpeed config. This requires DeepSpeed 0.12+:
+  # Use the new config
+  PYTORCH_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py \
+      --config configs/config_qwen3_1.7b_64k.yaml \
+      --deepspeed \
+      --deepspeed_config configs/deepspeed_ulysses_64k.json
+
+  Option 3: Ring Attention (Full Integration) (✅)
+
+  Use the ring attention training script with the new config:
+  PYTORCH_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_ring_attention.py \
+      --config configs/config_qwen3_1.7b_64k_ring.yaml
+
+  Note: The current ring attention script splits sequences but doesn't fully implement cross-GPU attention sharing. For production use, I recommend Option 2.
+
+  Option 4: Tensor Parallelism + ZeRO (❓)
+
+  Use Megatron-DeepSpeed or HuggingFace's tensor parallel. This is more complex but very effective for larger models.
+
+  Recommended Next Steps
+
+  1. First, test if the dataloader fix resolved the issue:
+  PYTORCH_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_64k.yaml
+  2. If still OOM, try 32K context to verify the approach:
+  # Temporarily modify max_seq_length to 32768 in config
+  3. If you need 64K+, use DeepSpeed Ulysses or I can help implement proper ring attention integration.
+
+
