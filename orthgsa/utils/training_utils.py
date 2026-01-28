@@ -460,8 +460,7 @@ def log_metrics(
     # Log to wandb
     if wandb_run is not None:
         wandb_metrics = {f"{prefix}/{k}": v for k, v in metrics.items()}
-        wandb_metrics["step"] = step
-        wandb_run.log(wandb_metrics)
+        wandb_run.log(wandb_metrics, step=step)
 
 
 def count_parameters(model: torch.nn.Module) -> Dict[str, int]:
