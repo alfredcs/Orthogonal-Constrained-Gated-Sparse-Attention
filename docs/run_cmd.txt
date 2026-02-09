@@ -161,7 +161,8 @@ python scripts/evaluate.py --checkpoint outputs/orthgsa-qwen3-8b-8k/checkpoint-1
 
   Use the ring attention training script with the new config:
   PYTORCH_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_ring_attention.py \
-      --config configs/config_qwen3_1.7b_64k_ring.yaml
+      --config configs/config_qwen3_8b_64k_ring.yaml \
+      ----resume outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500
 
   Note: The current ring attention script splits sequences but doesn't fully implement cross-GPU attention sharing. For production use, I recommend Option 2.
 
@@ -172,7 +173,7 @@ python scripts/evaluate.py --checkpoint outputs/orthgsa-qwen3-8b-8k/checkpoint-1
   Recommended Next Steps
 
   1. First, test if the dataloader fix resolved the issue:
-  PYTORCH_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_64k.yaml
+  PYTORCH_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_1.7b_64k.yaml (✅ ended at 735/2000 steps)
   2. If still OOM, try 32K context to verify the approach:
   # Temporarily modify max_seq_length to 32768 in config
   3. If you need 64K+, use DeepSpeed Ulysses or I can help implement proper ring attention integration.

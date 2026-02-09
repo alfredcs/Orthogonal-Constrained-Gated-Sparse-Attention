@@ -1,19 +1,14 @@
-# OrthGSA Training Configuration for Qwen3-8B with Ring Attention
+# OrthGSA Training Configuration for Qwen3-8B with Ring Attention (Conservative Memory)
 # Target: 8x 44GB GPUs, 64K context window with SEQUENCE PARALLELISM
 #
-# Memory Analysis for Qwen3-8B (~8B params):
-# - Model params: ~16GB (sharded with ZeRO-3 + CPU offload)
-# - With Ring Attention: Each GPU processes 64K/8 = 8K tokens
-# - Activations per GPU: ~8-12GB (vs ~60GB without ring attention)
-# - Total per GPU: ~20-25GB → fits in 44GB
+# This config uses more conservative memory settings to prevent NCCL timeouts
+# caused by memory accumulation during long training runs.
 
 # Model Configuration
 model:
   base_model: "/home/alfred/models/Qwen3-8B"
 
   # RoPE scaling for extended context
-  # Qwen3-8B has max_position_embeddings of 40960 (40K)
-  # For 64K context: 64K / 40K = 1.6x
   rope_scaling:
     type: "dynamic"
     factor: 1.6
@@ -47,15 +42,15 @@ data:
 training:
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 32   # Higher for larger model, effective batch = 256
+  gradient_accumulation_steps: 32   # Effective batch = 256
 
-  learning_rate: 1.0e-5             # Lower LR for larger model
+  learning_rate: 1.0e-5
   lr_scheduler_type: "cosine"
   warmup_ratio: 0.03
   weight_decay: 0.1
   max_grad_norm: 1.0
 
-  max_steps: 10000
+  max_steps: 2000
   eval_steps: 250
   save_steps: 250
   logging_steps: 10
@@ -72,7 +67,8 @@ training:
 # Distributed Training Configuration with Sequence Parallelism
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "configs/deepspeed_zero3_8b_64k_ring.json"
+  # Use conservative DeepSpeed config to prevent memory accumulation
+  deepspeed_config: "configs/deepspeed_zero3_8b_64k_ring_conservative.json"
 
   # SEQUENCE PARALLELISM via Ring Attention
   sequence_parallel:
@@ -82,7 +78,7 @@ distributed:
 
 # Memory Optimization
 memory:
-  target_memory_utilization: 0.85
+  target_memory_utilization: 0.75   # More conservative than 0.85
   activation_checkpointing: true
   checkpoint_layers: "all"
   use_flash_attention: true
@@ -92,10 +88,10 @@ memory:
 logging:
   wandb:
     enabled: true
-    project: "orthgsa-qwen3-8b-8l40s"
+    project: "orthgsa-qwen3-8b"
     entity: null
-    run_name: "qwen3_8b_64k_ring_8l40s"
-    tags: ["orthgsa", "qwen3-8b", "slimpajama", "64k-context", "ring-attention", "sequence-parallel"]
+    run_name: "qwen3-8b-64k-ring-attention-conservative"
+    tags: ["orthgsa", "qwen3-8b", "slimpajama", "64k-context", "ring-attention", "sequence-parallel", "conservative"]
     log_model: "checkpoint"            # Save model checkpoints to wandb
     watch: "gradients"                 # Log gradients to wandb
     log_code: true                     # Log code to wandb for reproducibility

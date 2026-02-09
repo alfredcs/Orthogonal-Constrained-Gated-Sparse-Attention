@@ -532,8 +532,13 @@ def get_gpu_memory_info() -> Dict[str, float]:
     if not torch.cuda.is_available():
         return {}
 
+    device = torch.cuda.current_device()
+    props = torch.cuda.get_device_properties(device)
+
     return {
         "allocated_gb": torch.cuda.memory_allocated() / 1e9,
         "reserved_gb": torch.cuda.memory_reserved() / 1e9,
         "max_allocated_gb": torch.cuda.max_memory_allocated() / 1e9,
+        "total_gb": props.total_memory / 1e9,
+        "free_gb": (props.total_memory - torch.cuda.memory_allocated()) / 1e9,
     }

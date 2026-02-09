@@ -377,12 +377,24 @@ def main():
     if global_step > 0:
         logger.info(f"Fast-forwarding dataloader to approximate position...")
         batches_to_skip = global_step * training_config["gradient_accumulation_steps"]
-        for _ in tqdm(range(min(batches_to_skip, len(train_dataloader))),
-                      desc="Fast-forwarding", disable=rank != 0):
+
+        # Handle streaming datasets that don't have __len__
+        try:
+            dataloader_len = len(train_dataloader)
+            skip_count = min(batches_to_skip, dataloader_len)
+        except TypeError:
+            # Streaming dataset - skip up to batches_to_skip or until exhausted
+            skip_count = batches_to_skip
+            logger.info(f"Streaming dataset detected, will skip up to {skip_count} batches")
+
+        skipped = 0
+        for _ in tqdm(range(skip_count), desc="Fast-forwarding", disable=rank != 0):
             try:
                 next(train_iterator)
+                skipped += 1
             except StopIteration:
                 train_iterator = iter(train_dataloader)
+                logger.info(f"Dataset exhausted after skipping {skipped} batches, restarting iterator")
                 break
 
     progress_bar = tqdm(

@@ -825,16 +825,27 @@ torchrun \
 
 ### Step 6.5: Resume Training
 
-OrthGSA provides a dedicated script for resuming DeepSpeed training from checkpoints.
+OrthGSA provides resume functionality for both standard DeepSpeed training and Ring Attention training.
 
-#### Auto-Resume from Latest Checkpoint (Recommended)
+> **Important**: Use the correct resume method based on your training script:
+> - **Standard DeepSpeed** (`train_deepspeed.py`): Use `resume_deepspeed.py`
+> - **Ring Attention** (`train_ring_attention.py`): Use `train_ring_attention.py --resume`
+>
+> Using the wrong resume script will fail because checkpoints from different DeepSpeed configurations (ZeRO-2 vs ZeRO-3) are incompatible.
 
-The `resume_deepspeed.py` script automatically finds and resumes from the latest checkpoint:
+#### Resume Standard DeepSpeed Training
+
+The `resume_deepspeed.py` script is for resuming training started with `train_deepspeed.py`:
 
 ```bash
 # Auto-detect and resume from the latest checkpoint in the output directory
 deepspeed --num_gpus=4 scripts/resume_deepspeed.py \
     --config configs/config_qwen3_4b.yaml
+
+# Resume from a specific checkpoint
+deepspeed --num_gpus=4 scripts/resume_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml \
+    --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-5000
 
 # Single GPU
 python scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml
@@ -848,16 +859,31 @@ python scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml
 4. **W&B Integration**: Marks resumed runs with `-resumed-{step}` suffix for easy identification
 5. **Progress Tracking**: Progress bar starts from the resumed step, showing accurate completion percentage
 
-#### Resume from a Specific Checkpoint
+#### Resume Ring Attention Training
 
-To resume from a specific checkpoint instead of the latest:
+For Ring Attention training (started with `train_ring_attention.py`), use the `--resume` flag with the same training script:
 
 ```bash
-# Specify exact checkpoint path
-deepspeed --num_gpus=4 scripts/resume_deepspeed.py \
-    --config configs/config_qwen3_4b.yaml \
-    --checkpoint outputs/orthgsa-qwen3-4b/checkpoint-5000
+# Resume Ring Attention training from a specific checkpoint
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_ring_attention.py \
+    --config configs/config_qwen3_8b_64k_ring.yaml \
+    --resume outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500
+
+# Another example with 32K context
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_ring_attention.py \
+    --config configs/config_qwen3_8b_32k_ring.yaml \
+    --resume outputs/orthgsa-qwen3-8b-32k-ring/checkpoint-1000
 ```
+
+**Key Features of Ring Attention Resume:**
+
+1. **Same Script**: Uses the same `train_ring_attention.py` script with `--resume` flag
+2. **ZeRO-3 Compatible**: Properly loads ZeRO-3 checkpoints with CPU offloading
+3. **Ring Communicator**: Reinitializes the ring communicator for sequence parallelism
+4. **Checkpoint Validation**: Verifies checkpoint exists and logs file details before loading
+5. **Step Recovery**: Automatically extracts the global step from checkpoint metadata
 
 #### Resume DDP Training
 
@@ -879,6 +905,7 @@ torchrun --nproc_per_node=4 scripts/train.py \
 
 Checkpoints are saved in the output directory with the following structure:
 
+**Standard DeepSpeed (ZeRO-2) Checkpoints:**
 ```
 outputs/orthgsa-qwen3-4b/
 ├── checkpoint-1000/
@@ -886,12 +913,43 @@ outputs/orthgsa-qwen3-4b/
 │   │   ├── mp_rank_00_model_states.pt
 │   │   ├── zero_pp_rank_0_mp_rank_00_optim_states.pt
 │   │   └── ...
-│   └── latest                # Marker file
+│   └── latest                # Marker file pointing to global_step1000
 ├── checkpoint-2000/
 │   └── ...
 └── checkpoint-3000/
     └── ...
 ```
+
+**Ring Attention (ZeRO-3) Checkpoints:**
+```
+outputs/orthgsa-qwen3-8b-64k-ring/
+├── checkpoint-500/
+│   ├── global_step499/       # DeepSpeed ZeRO-3 checkpoint files
+│   │   ├── zero_pp_rank_0_mp_rank_00_model_states.pt
+│   │   ├── zero_pp_rank_1_mp_rank_00_model_states.pt
+│   │   ├── ...
+│   │   ├── bf16_zero_pp_rank_0_mp_rank_00_optim_states.pt
+│   │   ├── bf16_zero_pp_rank_1_mp_rank_00_optim_states.pt
+│   │   └── ...
+│   ├── hf_model/             # HuggingFace-compatible checkpoint
+│   │   ├── config.json
+│   │   ├── model.safetensors
+│   │   └── orthgsa_weights.pt
+│   ├── latest                # Marker file pointing to global_step499
+│   └── zero_to_fp32.py       # Script to convert ZeRO checkpoint to FP32
+└── checkpoint-1000/
+    └── ...
+```
+
+> **Note**: The checkpoint folder name (e.g., `checkpoint-500`) represents the training step when saved, while the internal folder (e.g., `global_step499`) uses DeepSpeed's 0-indexed global step counter.
+
+#### Resume Script Selection Guide
+
+| Training Script | Checkpoint Type | Resume Method |
+|-----------------|-----------------|---------------|
+| `train_deepspeed.py` | ZeRO-2 | `resume_deepspeed.py` |
+| `train_ring_attention.py` | ZeRO-3 | `train_ring_attention.py --resume` |
+| `train.py` (DDP) | PyTorch | `train.py --resume` |
 
 ### Step 6.6: Monitor Training
 
@@ -1082,6 +1140,51 @@ data:
   # dataset_path: "s3://..."  # Comment out to use HuggingFace
 ```
 
+### Issue: Resume Training Fails with "AssertionError: assert len(self.ckpt_list) > 0"
+
+This error occurs when using the wrong resume script for your checkpoint type:
+
+```
+AssertionError: assert len(self.ckpt_list) > 0
+```
+
+**Cause**: DeepSpeed checkpoint formats differ between ZeRO stages. Using `resume_deepspeed.py` (ZeRO-2) to load a checkpoint from `train_ring_attention.py` (ZeRO-3) will fail.
+
+**Solution**: Use the correct resume method:
+
+```bash
+# For Ring Attention checkpoints (ZeRO-3):
+# Use train_ring_attention.py with --resume flag
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_ring_attention.py \
+    --config configs/config_qwen3_8b_64k_ring.yaml \
+    --resume outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500
+
+# For standard DeepSpeed checkpoints (ZeRO-2):
+# Use resume_deepspeed.py
+deepspeed --num_gpus=4 scripts/resume_deepspeed.py \
+    --config configs/config_qwen3_4b.yaml
+```
+
+**How to identify checkpoint type**:
+- ZeRO-3 checkpoints have files like `zero_pp_rank_X_mp_rank_00_model_states.pt`
+- ZeRO-2 checkpoints have files like `mp_rank_00_model_states.pt`
+
+### Issue: Resume Training Fails with "Checkpoint directory not found"
+
+**Solution**: Verify the checkpoint path exists and is correct:
+
+```bash
+# Check if checkpoint directory exists
+ls -la outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500/
+
+# Check for 'latest' file
+cat outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500/latest
+
+# Verify checkpoint files exist
+ls outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500/global_step*/
+```
+
 ### Issue: DeepSpeed installation fails
 
 ```bash
@@ -1191,17 +1294,33 @@ deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_
 # ============================================
 # Resume Training
 # ============================================
-# Resume Qwen3-4B from latest checkpoint
+# Resume Qwen3-4B from latest checkpoint (standard DeepSpeed)
 deepspeed --num_gpus=4 scripts/resume_deepspeed.py --config configs/config_qwen3_4b.yaml
 
-# Resume Qwen3-8B 8K from latest checkpoint
+# Resume Qwen3-8B 8K from latest checkpoint (standard DeepSpeed)
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
 deepspeed --num_gpus=8 scripts/resume_deepspeed.py --config configs/config_qwen3_8b_8k.yaml
 
-# Resume Qwen3-8B 32K from specific checkpoint
+# Resume Qwen3-8B 32K from specific checkpoint (standard DeepSpeed)
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
 deepspeed --num_gpus=8 scripts/resume_deepspeed.py --config configs/config_qwen3_8b_32k.yaml \
     --checkpoint outputs/orthgsa-qwen3-8b-32k/checkpoint-5000
+
+# ============================================
+# Resume Ring Attention Training (ZeRO-3)
+# IMPORTANT: Use train_ring_attention.py with --resume flag, NOT resume_deepspeed.py
+# ============================================
+# Resume Ring Attention training from checkpoint
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_ring_attention.py \
+    --config configs/config_qwen3_8b_64k_ring.yaml \
+    --resume outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500
+
+# Resume Ring Attention with 32K context
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_ring_attention.py \
+    --config configs/config_qwen3_8b_32k_ring.yaml \
+    --resume outputs/orthgsa-qwen3-8b-32k-ring/checkpoint-1000
 
 # Single GPU training
 python scripts/train.py --config configs/config_qwen3_4b.yaml
@@ -1251,23 +1370,25 @@ OrthGSA/
 ├── orthgsa/                 # Source code
 ├── outputs/                 # Training outputs
 ├── scripts/
-│   ├── setup_env.sh         # Environment setup script
-│   ├── launch_train.sh      # Training launch script
-│   ├── train.py             # Single-GPU / DDP training script
-│   ├── train_deepspeed.py   # DeepSpeed multi-GPU training script (recommended)
-│   ├── resume_deepspeed.py  # Resume training from checkpoint (DeepSpeed)
-│   └── evaluate.py          # Evaluation script
+│   ├── setup_env.sh             # Environment setup script
+│   ├── launch_train.sh          # Training launch script
+│   ├── train.py                 # Single-GPU / DDP training script
+│   ├── train_deepspeed.py       # DeepSpeed multi-GPU training script (ZeRO-2)
+│   ├── train_ring_attention.py  # Ring Attention training (ZeRO-3, supports --resume)
+│   ├── resume_deepspeed.py      # Resume ZeRO-2 training from checkpoint
+│   └── evaluate.py              # Evaluation script
 ├── pyproject.toml           # Project configuration (uv/pip)
 └── Getting_started.md       # This guide
 ```
 
 ### Training Script Comparison
 
-| Script | Use Case | Memory Efficiency |
-|--------|----------|-------------------|
-| `train.py` | Single GPU, DDP with 80GB+ GPUs | Low (full model per GPU) |
-| `train_deepspeed.py` | Multi-GPU with 24-48GB GPUs | High (optimizer sharding) |
-| `resume_deepspeed.py` | Resume DeepSpeed training from checkpoint | High (optimizer sharding) |
+| Script | Use Case | Memory Efficiency | Resume Method |
+|--------|----------|-------------------|---------------|
+| `train.py` | Single GPU, DDP with 80GB+ GPUs | Low (full model per GPU) | `--resume` flag |
+| `train_deepspeed.py` | Multi-GPU with 24-48GB GPUs (ZeRO-2) | High (optimizer sharding) | `resume_deepspeed.py` |
+| `train_ring_attention.py` | Ultra-long context 64K-128K (ZeRO-3) | Highest (params + optimizer offload) | `--resume` flag |
+| `resume_deepspeed.py` | Resume ZeRO-2 training from checkpoint | High (optimizer sharding) | N/A |
 
 ---
 

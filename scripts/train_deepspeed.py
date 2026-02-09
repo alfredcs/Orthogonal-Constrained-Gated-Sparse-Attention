@@ -142,28 +142,28 @@ def save_hf_checkpoint(
     # Save full 16-bit model (only rank 0 actually writes)
     model_engine.save_16bit_model(hf_save_dir, save_filename="model.safetensors")
 
-    # Only rank 0 saves config and orthgsa weights
+    # Save config.json (only rank 0)
     if rank == 0:
-        # Save config.json with orthgsa config included
         config_dict = model.config.to_dict()
         config_dict['orthgsa'] = orthgsa_config.to_dict()
         with open(os.path.join(hf_save_dir, 'config.json'), 'w') as f:
             json.dump(config_dict, f, indent=2)
 
-        # Save OrthGSA-specific weights
-        # Need to gather from model (may be sharded across GPUs with ZeRO-3)
-        with deepspeed.zero.GatheredParameters(
-            list(model.mhc_modules.parameters()) + [model.expand_streams, model.collapse_streams],
-            modifier_rank=0
-        ):
+    # Save OrthGSA-specific weights
+    # GatheredParameters is a COLLECTIVE operation - ALL ranks must participate
+    # Only rank 0 (modifier_rank=0) will do the actual save
+    with deepspeed.zero.GatheredParameters(
+        list(model.mhc_modules.parameters()) + [model.expand_streams, model.collapse_streams],
+        modifier_rank=0
+    ):
+        if rank == 0:
             orthgsa_state = {
                 'mhc_modules': model.mhc_modules.state_dict(),
                 'expand_streams': model.expand_streams.data.clone(),
                 'collapse_streams': model.collapse_streams.data.clone(),
             }
             torch.save(orthgsa_state, os.path.join(hf_save_dir, 'orthgsa_weights.pt'))
-
-        logger.info(f"HuggingFace-compatible checkpoint saved to {hf_save_dir}")
+            logger.info(f"HuggingFace-compatible checkpoint saved to {hf_save_dir}")
 
 
 def main():

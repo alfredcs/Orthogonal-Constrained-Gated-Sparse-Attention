@@ -282,6 +282,16 @@ deepspeed --num_gpus=8 scripts/train_deepspeed.py --config configs/config_qwen3_
 # DeepSpeed ZeRO-3 + Ring Attention (for ultra-long context 64K-128K)
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 deepspeed --num_gpus=8 scripts/train_ring_attention.py --config configs/config_qwen3_8b_64k_ring.yaml
+
+# Resume training from a checkpoint
+# Standard DeepSpeed training:
+deepspeed --num_gpus=8 scripts/resume_deepspeed.py --config configs/config_qwen3_8b_64k.yaml
+
+# Ring Attention training (use the same script with --resume flag):
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+deepspeed --num_gpus=8 scripts/train_ring_attention.py \
+    --config configs/config_qwen3_8b_64k_ring.yaml \
+    --resume outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500
 ```
 
 **Ring Attention** enables sequence parallelism by distributing the sequence across GPUs:

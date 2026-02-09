@@ -1,0 +1,1 @@
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True deepspeed --num_gpus=8 scripts/train_ring_attention.py  --config configs/config_qwen3_8b_64k_ring_conservative.yaml  --resume outputs/orthgsa-qwen3-8b-64k-ring/checkpoint-500 
